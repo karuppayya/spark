@@ -17,7 +17,7 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{Externalizable, ObjectInput, ObjectOutput}
+import java.io.{ByteArrayOutputStream, Externalizable, IOException, ObjectInput, ObjectOutput, ObjectOutputStream}
 
 import scala.collection.mutable
 
@@ -43,6 +43,10 @@ private[spark] sealed trait MapStatus {
    * necessary for correctness, since block fetchers are allowed to skip zero-size blocks.
    */
   def getSizeForBlock(reduceId: Int): Long
+
+  def getOtherStats: Option[Map[String, Long]] = {
+    None
+  }
 }
 
 
@@ -60,7 +64,8 @@ private[spark] object MapStatus {
     if (uncompressedSizes.length > minPartitionsToUseHighlyCompressMapStatus) {
       HighlyCompressedMapStatus(loc, uncompressedSizes)
     } else {
-      new CompressedMapStatus(loc, uncompressedSizes)
+      val tmpMap = Seq("a" -> 1L, "b" -> 2L).toMap
+      new CompressedMapStatus(loc, uncompressedSizes, Option(tmpMap))
     }
   }
 
@@ -103,13 +108,20 @@ private[spark] object MapStatus {
  */
 private[spark] class CompressedMapStatus(
     private[this] var loc: BlockManagerId,
-    private[this] var compressedSizes: Array[Byte])
+    private[this] var compressedSizes: Array[Byte],
+    private[this] var otherStats: Option[Map[String, Long]] = None)
   extends MapStatus with Externalizable {
 
   protected def this() = this(null, null.asInstanceOf[Array[Byte]])  // For deserialization only
 
   def this(loc: BlockManagerId, uncompressedSizes: Array[Long]) {
     this(loc, uncompressedSizes.map(MapStatus.compressSize))
+  }
+
+  
+  def this(loc: BlockManagerId,
+     uncompressedSizes: Array[Long], otherStast: Option[Map[String, Long]]) {
+    this(loc, uncompressedSizes.map(MapStatus.compressSize), otherStast )
   }
 
   override def location: BlockManagerId = loc
@@ -122,6 +134,17 @@ private[spark] class CompressedMapStatus(
     loc.writeExternal(out)
     out.writeInt(compressedSizes.length)
     out.write(compressedSizes)
+    val bos: ByteArrayOutputStream = new ByteArrayOutputStream()
+    out.writeBoolean(otherStats.isDefined)
+    if (otherStats.isDefined) {
+      val values = otherStats.get.toSeq
+      out.writeInt(values.size)
+      values.foreach {
+        case (key, value) =>
+          out.writeUTF(key)
+          out.writeLong(value)
+      }
+    }
   }
 
   override def readExternal(in: ObjectInput): Unit = Utils.tryOrIOException {
@@ -129,6 +152,17 @@ private[spark] class CompressedMapStatus(
     val len = in.readInt()
     compressedSizes = new Array[Byte](len)
     in.readFully(compressedSizes)
+    val otherStatsAvailable = in.readBoolean()
+    if (otherStatsAvailable) {
+      val num = in.readInt()
+      val a = (1 to num).map {
+        index =>
+          val key = in.readUTF()
+          val value = in.readLong()
+          (key -> value)
+      }.toMap
+      otherStats = Option(a)
+    }
   }
 }
 
