@@ -204,7 +204,7 @@ class ExchangeCoordinator(
       val newPostShuffleRDDs = new JHashMap[ShuffleExchangeExec, ShuffledRowRDD](numExchanges)
 
       // Submit all map stages
-      val shuffleDependencies = ArrayBuffer[ShuffleDependency[Int, InternalRow, InternalRow]]()
+      val shuffleDependencies = ArrayBuffer[ShuffleDependency[Tuple2[Int, Int], InternalRow, InternalRow]]()
       val submittedStageFutures = ArrayBuffer[SimpleFutureAction[MapOutputStatistics]]()
       var i = 0
       while (i < numExchanges) {

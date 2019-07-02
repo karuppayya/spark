@@ -41,8 +41,15 @@ private final class ShuffledRowRDDPartition(
  * use on RDDs of (Int, Row) pairs where the Int is a partition id in the expected range).
  */
 private class PartitionIdPassthrough(override val numPartitions: Int) extends Partitioner {
-  override def getPartition(key: Any): Int = key.asInstanceOf[Int]
+  override def getPartition(key: Any): Int = {
+    if (key.isInstanceOf[Tuple2[Int, _]]) {
+      key.asInstanceOf[Tuple2[Int, _]]._1
+    } else {
+      key.asInstanceOf[Int]
+    }
+  }
 }
+
 
 /**
  * A Partitioner that might group together one or more partitions from the parent.
@@ -112,7 +119,7 @@ class CoalescedPartitioner(val parent: Partitioner, val partitionStartIndices: A
  * a post-shuffle partition is created for every pre-shuffle partition.
  */
 class ShuffledRowRDD(
-    var dependency: ShuffleDependency[Int, InternalRow, InternalRow],
+    var dependency: ShuffleDependency[Tuple2[Int, Int], InternalRow, InternalRow],
     metrics: Map[String, SQLMetric],
     specifiedPartitionStartIndices: Option[Array[Int]] = None)
   extends RDD[InternalRow](dependency.rdd.context, Nil) {
