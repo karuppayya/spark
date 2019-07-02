@@ -119,7 +119,7 @@ class CoalescedPartitioner(val parent: Partitioner, val partitionStartIndices: A
  * a post-shuffle partition is created for every pre-shuffle partition.
  */
 class ShuffledRowRDD(
-    var dependency: ShuffleDependency[Tuple2[Int, Int], InternalRow, InternalRow],
+    var dependency: ShuffleDependency[Tuple2[Int, _], InternalRow, InternalRow],
     metrics: Map[String, SQLMetric],
     specifiedPartitionStartIndices: Option[Array[Int]] = None)
   extends RDD[InternalRow](dependency.rdd.context, Nil) {

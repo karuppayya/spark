@@ -148,8 +148,10 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       final Product2<K, V> record = records.next();
       final K key = record._1();
       Object o;
+      Object v;
       if (key instanceof Tuple2) {
         o = ((Tuple2)key)._1();
+        v = ((Tuple2)key)._2();
       } else {
         o = key;
       }
