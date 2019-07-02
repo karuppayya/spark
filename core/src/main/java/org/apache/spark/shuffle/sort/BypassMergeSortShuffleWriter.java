@@ -160,6 +160,12 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       while (records.hasNext()) {
         final Product2<K, V> record = records.next();
         final K key = record._1();
+        Object o;
+        if (key instanceof Tuple2) {
+          o = ((Tuple2)key)._1();
+        } else {
+          o = key;
+        }
         partitionWriters[partitioner.getPartition(key)].write(key, record._2());
       }
 
