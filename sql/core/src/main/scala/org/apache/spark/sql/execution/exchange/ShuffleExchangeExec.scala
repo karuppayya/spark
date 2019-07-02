@@ -69,7 +69,7 @@ case class ShuffleExchangeExec(
    * the returned ShuffleDependency will be the input of shuffle.
    */
   @transient
-  lazy val shuffleDependency : ShuffleDependency[Tuple2[Int, Int], InternalRow, InternalRow] = {
+  lazy val shuffleDependency : ShuffleDependency[Tuple2[Int, _], InternalRow, InternalRow] = {
     ShuffleExchangeExec.prepareShuffleDependency(
       inputRDD,
       child.output,
@@ -165,7 +165,7 @@ object ShuffleExchangeExec {
       newPartitioning: Partitioning,
       serializer: Serializer,
       writeMetrics: Map[String, SQLMetric])
-    : ShuffleDependency[Tuple2[Int, Int], InternalRow, InternalRow] = {
+    : ShuffleDependency[Tuple2[Int, _], InternalRow, InternalRow] = {
     val part: Partitioner = newPartitioning match {
       case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
       case HashPartitioning(_, n) =>
@@ -214,9 +214,10 @@ object ShuffleExchangeExec {
           position
         }
       case h: HashPartitioning =>
-        val projection = UnsafeProjection.create(h.partitionIdExpression :: Nil, outputAttributes)
+        val newExprs = Seq(h.partitionIdExpression) ++ h.expressions
+        val projection = UnsafeProjection.create(newExprs, outputAttributes)
         row => {
-          (projection(row).getInt(0) -> 0)
+          (projection(row).getInt(0) -> projection(row).getInt(1))
         }
       case RangePartitioning(sortingExpressions, _) =>
         val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
@@ -228,7 +229,7 @@ object ShuffleExchangeExec {
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
 
-    val rddWithPartitionIds: RDD[Product2[Tuple2[Int, Int], InternalRow]] = {
+    val rddWithPartitionIds: RDD[Product2[Tuple2[Int, _], InternalRow]] = {
       // [SPARK-23207] Have to make sure the generated RoundRobinPartitioning is deterministic,
       // otherwise a retry task may output different rows and thus lead to data loss.
       //
@@ -283,10 +284,10 @@ object ShuffleExchangeExec {
       } else {
         newRdd.mapPartitionsWithIndexInternal((_, iter) => {
           val getPartitionKey = getPartitionKeyExtractor()
-          val mutablePair = new MutablePair[Tuple2[Int, Int], InternalRow]()
+          val mutablePair = new MutablePair[Tuple2[Int, _], InternalRow]()
 
           iter.map { row =>
-            val partKey: Tuple2[Int, Int] = getPartitionKey(row).asInstanceOf[Tuple2[Int, Int]]
+            val partKey: Tuple2[Int, _] = getPartitionKey(row).asInstanceOf[Tuple2[Int, Any]]
             val tuple = (part.getPartition(partKey._1), partKey._2)
             mutablePair.update(tuple, row) }
         }, isOrderSensitive = isOrderSensitive)
@@ -297,7 +298,7 @@ object ShuffleExchangeExec {
     // are in the form of (partitionId, row) and every partitionId is in the expected range
     // [0, part.numPartitions - 1]. The partitioner of this is a PartitionIdPassthrough.
     val dependency =
-      new ShuffleDependency[Tuple2[Int, Int], InternalRow, InternalRow](
+      new ShuffleDependency[Tuple2[Int, _], InternalRow, InternalRow](
         rddWithPartitionIds,
         new PartitionIdPassthrough(part.numPartitions),
         serializer,
