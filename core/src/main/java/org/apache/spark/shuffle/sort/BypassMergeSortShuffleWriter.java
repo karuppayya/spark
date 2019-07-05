@@ -23,6 +23,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.channels.FileChannel;
 import java.util.Optional;
+import java.util.*;
 import javax.annotation.Nullable;
 
 import scala.None$;
@@ -95,7 +96,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private FileSegment[] partitionWriterSegments;
   @Nullable private MapStatus mapStatus;
   private long[] partitionLengths;
-
+  private ArrayList<SkewKeyHolder> skewedKeys;
   /**
    * Are we in the process of stopping? Because map tasks can call stop() with success = true
    * and then call stop() with success = false if they get an exception, we want to make sure
@@ -137,9 +138,16 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         mapOutputWriter.commitAllPartitions();
         mapStatus = MapStatus$.MODULE$.apply(
             blockManager.shuffleServerId(),
-            partitionLengths);
+            partitionLengths, getSkewDetails(), 0);
         return;
       }
+
+      skewedKeys = new ArrayList<>(numPartitions);
+
+      for(int i=0; i< numPartitions; i++) {
+        skewedKeys.add(i, new SkewKeyHolder(i));
+      }
+
       final SerializerInstance serInstance = serializer.newInstance();
       final long openStartTime = System.nanoTime();
       partitionWriters = new DiskBlockObjectWriter[numPartitions];
@@ -157,29 +165,35 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       // included in the shuffle write time.
       writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
 
+      Object o;
+      Object v;
       while (records.hasNext()) {
         final Product2<K, V> record = records.next();
         final K key = record._1();
-        Object o;
-        Object v;
         if (key instanceof Tuple2) {
           o = ((Tuple2)key)._1();
           v = ((Tuple2)key)._2();
+          SkewKeyHolder skewKeyHolder = skewedKeys.get((Integer) o);
+          skewKeyHolder.update(((Tuple2)key)._1());
         } else {
           o = key;
         }
-        partitionWriters[partitioner.getPartition(key)].write(key, record._2());
+        int partition = partitioner.getPartition(o);
+        partitionWriters[partitioner.getPartition(partition)].write(key, record._2());
       }
 
+      long recordsWritten = 0;
       for (int i = 0; i < numPartitions; i++) {
         try (DiskBlockObjectWriter writer = partitionWriters[i]) {
           partitionWriterSegments[i] = writer.commitAndGet();
+          recordsWritten += writer.getRecordsWritten();
         }
       }
 
       partitionLengths = writePartitionedData(mapOutputWriter);
       mapOutputWriter.commitAllPartitions();
-      mapStatus = MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths);
+      mapStatus =  MapStatus$.MODULE$.apply(blockManager.shuffleServerId(), partitionLengths,
+              getSkewDetails(), recordsWritten);
     } catch (Exception e) {
       try {
         mapOutputWriter.abort(e);
@@ -303,6 +317,56 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         }
         return None$.empty();
       }
+    }
+  }
+
+  private Option<List<Tuple2<Object, Long>>> getSkewDetails() {
+    List<Tuple2<Object, Long>> skewInfoList = new ArrayList<>();
+    for (SkewKeyHolder holder: skewedKeys) {
+      skewInfoList.add(new Tuple2<>(holder.getKey(), holder.getCount()));
+    }
+    return Option.apply(skewInfoList);
+  }
+
+  private class SkewKeyHolder {
+
+    private int partitionId;
+    private Object currentValue = null;
+    // say all records are unique, then
+    // currentCount > count will never be true
+    private long currentCount = 1;
+
+    private Object key;
+    private long count = -1;
+
+    SkewKeyHolder(int id) {
+      this.partitionId = id;
+    }
+
+
+    public void update(Object value) {
+      // currentValue != value , expensive?
+     if (currentValue != value) {
+        if (currentCount > count) {
+          count = currentCount;
+          key = value;
+        }
+        currentValue = value;
+        currentCount = 0;
+      }
+      currentCount ++;
+    }
+
+    public int getPartitionId() {
+      return partitionId;
+    }
+
+    public Object getKey() {
+      return key;
+    }
+
+    public long getCount() {
+      return count;
     }
   }
 }
