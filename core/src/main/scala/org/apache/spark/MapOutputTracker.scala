@@ -521,6 +521,7 @@ private[spark] class MapOutputTrackerMaster(
   def getStatistics(dep: ShuffleDependency[_, _, _]): MapOutputStatistics = {
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
       val totalSizes = new Array[Long](dep.partitioner.numPartitions)
+      val shuffleKeyValue: Map[Int, ListBuffer[Tuple2[Any, Long]]] = Map.empty
       val parallelAggThreshold = conf.get(
         SHUFFLE_MAP_OUTPUT_PARALLEL_AGGREGATION_THRESHOLD)
       val parallelism = math.min(
@@ -530,6 +531,12 @@ private[spark] class MapOutputTrackerMaster(
         for (s <- statuses) {
           for (i <- 0 until totalSizes.length) {
             totalSizes(i) += s.getSizeForBlock(i)
+            val a = shuffleKeyValue.getOrElse(i, {
+              val seq = ListBuffer.empty[Tuple2[Any, Long]]
+              shuffleKeyValue.put(i, seq)
+              seq
+            })
+            a += s.getOtherStats(i)
           }
         }
       } else {
@@ -540,6 +547,12 @@ private[spark] class MapOutputTrackerMaster(
             reduceIds => Future {
               for (s <- statuses; i <- reduceIds) {
                 totalSizes(i) += s.getSizeForBlock(i)
+                val a = shuffleKeyValue.getOrElse(i, {
+                  val seq = ListBuffer.empty[Tuple2[Any, Long]]
+                  shuffleKeyValue.put(i, seq)
+                  seq
+                })
+                a += s.getOtherStats(i)
               }
             }
           }
@@ -548,7 +561,17 @@ private[spark] class MapOutputTrackerMaster(
           threadPool.shutdown()
         }
       }
-      new MapOutputStatistics(dep.shuffleId, totalSizes)
+
+      val skewedKeyValue = shuffleKeyValue.flatMap {
+        case(_, x) =>
+          x.groupBy(_._1).map {
+            case(obj, count) =>
+              val sum = count.map(_._2).sum
+              (obj -> sum)
+          }
+      }.maxBy(_._2)
+
+      new MapOutputStatistics(dep.shuffleId, totalSizes, Option(skewedKeyValue))
     }
   }
 

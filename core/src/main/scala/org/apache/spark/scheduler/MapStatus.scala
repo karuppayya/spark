@@ -17,7 +17,7 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{ByteArrayOutputStream, Externalizable, IOException, ObjectInput, ObjectOutput, ObjectOutputStream}
+import java.io.{ByteArrayOutputStream, Externalizable, IOException, ObjectInput, ObjectOutput}
 
 import scala.collection.mutable
 
@@ -44,8 +44,8 @@ private[spark] sealed trait MapStatus {
    */
   def getSizeForBlock(reduceId: Int): Long
 
-  def getOtherStats: Option[Map[String, Long]] = {
-    None
+  def getOtherStats(partitionId: Int): Tuple2[Object, Long] = {
+    null
   }
 }
 
@@ -60,12 +60,21 @@ private[spark] object MapStatus {
     .map(_.conf.get(config.SHUFFLE_MIN_NUM_PARTS_TO_HIGHLY_COMPRESS))
     .getOrElse(config.SHUFFLE_MIN_NUM_PARTS_TO_HIGHLY_COMPRESS.defaultValue.get)
 
-  def apply(loc: BlockManagerId, uncompressedSizes: Array[Long]): MapStatus = {
+  def apply(loc: BlockManagerId, uncompressedSizes: Array[Long],
+      skewedKeys: Option[java.util.List[Tuple2[Object, java.lang.Long]]] = None,
+            totalRecords: Long = 0L): MapStatus = {
     if (uncompressedSizes.length > minPartitionsToUseHighlyCompressMapStatus) {
       HighlyCompressedMapStatus(loc, uncompressedSizes)
     } else {
-      val tmpMap = Seq("a" -> 1L, "b" -> 2L).toMap
-      new CompressedMapStatus(loc, uncompressedSizes, Option(tmpMap))
+      if (skewedKeys.isDefined) {
+        import scala.collection.JavaConverters._
+        val sKeys = skewedKeys.get
+        val scal = sKeys.asScala.asInstanceOf[Seq[Tuple2[Object, Long]]]
+        val mapSt = (1 to scal.size).zip(scal).toMap
+        new CompressedMapStatus(loc, uncompressedSizes, mapSt)
+      } else {
+        new CompressedMapStatus(loc, uncompressedSizes)
+      }
     }
   }
 
@@ -109,7 +118,7 @@ private[spark] object MapStatus {
 private[spark] class CompressedMapStatus(
     private[this] var loc: BlockManagerId,
     private[this] var compressedSizes: Array[Byte],
-    private[this] var otherStats: Option[Map[String, Long]] = None)
+    private[this] var otherStats: Option[Map[Int, Tuple2[Object, Long]]] = None)
   extends MapStatus with Externalizable {
 
   protected def this() = this(null, null.asInstanceOf[Array[Byte]])  // For deserialization only
@@ -118,10 +127,9 @@ private[spark] class CompressedMapStatus(
     this(loc, uncompressedSizes.map(MapStatus.compressSize))
   }
 
-  
   def this(loc: BlockManagerId,
-     uncompressedSizes: Array[Long], otherStast: Option[Map[String, Long]]) {
-    this(loc, uncompressedSizes.map(MapStatus.compressSize), otherStast )
+     uncompressedSizes: Array[Long], otherStast: Map[Int, Tuple2[Object, Long]]) {
+    this(loc, uncompressedSizes.map(MapStatus.compressSize), Option(otherStast))
   }
 
   override def location: BlockManagerId = loc
@@ -135,13 +143,13 @@ private[spark] class CompressedMapStatus(
     out.writeInt(compressedSizes.length)
     out.write(compressedSizes)
     val bos: ByteArrayOutputStream = new ByteArrayOutputStream()
-    out.writeBoolean(otherStats.isDefined)
-    if (otherStats.isDefined) {
-      val values = otherStats.get.toSeq
+    out.writeBoolean(otherStats.nonEmpty)
+    if (otherStats.nonEmpty) {
+      val (_, values) = otherStats.get.unzip
       out.writeInt(values.size)
       values.foreach {
         case (key, value) =>
-          out.writeUTF(key)
+          out.writeObject(key)
           out.writeLong(value)
       }
     }
@@ -155,14 +163,18 @@ private[spark] class CompressedMapStatus(
     val otherStatsAvailable = in.readBoolean()
     if (otherStatsAvailable) {
       val num = in.readInt()
-      val a = (1 to num).map {
+      val stats = (1 to num).map {
         index =>
-          val key = in.readUTF()
+          val key = in.readObject()
           val value = in.readLong()
           (key -> value)
-      }.toMap
-      otherStats = Option(a)
+      }
+      otherStats = Option((0 until stats.size).zip(stats).toMap)
     }
+  }
+
+  override def getOtherStats(partitionId: Int): (Object, Long) = {
+      otherStats.get.get(partitionId).get
   }
 }
 
