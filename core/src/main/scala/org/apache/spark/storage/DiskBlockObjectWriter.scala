@@ -74,6 +74,7 @@ private[spark] class DiskBlockObjectWriter(
   private var initialized = false
   private var streamOpen = false
   private var hasBeenClosed = false
+  private var errorOccurred = false
 
   /**
    * Cursors used to represent positions in the file.
@@ -208,6 +209,7 @@ private[spark] class DiskBlockObjectWriter(
       if (initialized) {
         writeMetrics.decBytesWritten(reportedPosition - committedPosition)
         writeMetrics.decRecordsWritten(numRecordsWritten)
+        errorOccurred = true
         streamOpen = false
         closeResources()
       }
@@ -272,6 +274,18 @@ private[spark] class DiskBlockObjectWriter(
     val pos = channel.position()
     writeMetrics.incBytesWritten(pos - reportedPosition)
     reportedPosition = pos
+  }
+
+  /**
+    * Number of records that were actually written to the file
+    * @return
+    */
+  def getRecordsWritten(): Long = {
+    if (errorOccurred) {
+      0
+    } else {
+      numRecordsWritten
+    }
   }
 
   // For testing
