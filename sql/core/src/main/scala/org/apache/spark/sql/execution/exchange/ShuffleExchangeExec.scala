@@ -211,7 +211,7 @@ object ShuffleExchangeExec {
         (row: InternalRow) => {
           // The HashPartitioner will handle the `mod` by the number of partitions
           position += 1
-          position
+          (position, 0L)
         }
       case h: HashPartitioning =>
         val newExprs = Seq(h.partitionIdExpression) ++ h.expressions
@@ -221,8 +221,13 @@ object ShuffleExchangeExec {
         }
       case RangePartitioning(sortingExpressions, _) =>
         val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
-        row => projection(row)
-      case SinglePartition => identity
+        row => {
+          projection(row) -> 0L
+        }
+      case SinglePartition =>
+        row => {
+          (row -> 0L)
+        }
       case _ => sys.error(s"Exchange not implemented for $newPartitioning")
     }
 
@@ -287,7 +292,7 @@ object ShuffleExchangeExec {
           val mutablePair = new MutablePair[Tuple2[Int, _], InternalRow]()
 
           iter.map { row =>
-            val partKey: Tuple2[Int, _] = getPartitionKey(row).asInstanceOf[Tuple2[Int, Any]]
+            val partKey: Tuple2[_, _] = getPartitionKey(row).asInstanceOf[Tuple2[_, Any]]
             val tuple = (part.getPartition(partKey._1), partKey._2)
             mutablePair.update(tuple, row) }
         }, isOrderSensitive = isOrderSensitive)
