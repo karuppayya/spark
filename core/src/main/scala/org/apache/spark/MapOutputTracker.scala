@@ -33,7 +33,6 @@ import org.apache.spark.internal.config._
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEndpointRef, RpcEnv}
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.MetadataFetchFailedException
-import org.apache.spark.shuffle.sort.SkewInfo
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId}
 import org.apache.spark.util._
 
@@ -522,7 +521,7 @@ private[spark] class MapOutputTrackerMaster(
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
       var totalRecords: Long = 0
       val totalSizes = new Array[Long](dep.partitioner.numPartitions)
-      val shuffleKeyValue: Map[Int, ListBuffer[SkewInfo]] = Map.empty
+      val shuffleKeyValue: Map[Int, ListBuffer[Option[SkewInfo]]] = Map.empty
       val parallelAggThreshold = conf.get(
         SHUFFLE_MAP_OUTPUT_PARALLEL_AGGREGATION_THRESHOLD)
       val parallelism = math.min(
@@ -534,7 +533,7 @@ private[spark] class MapOutputTrackerMaster(
           for (i <- 0 until totalSizes.length) {
             totalSizes(i) += s.getSizeForBlock(i)
             val a = shuffleKeyValue.getOrElse(i, {
-              val seq = ListBuffer.empty[SkewInfo]
+              val seq = ListBuffer.empty[Option[SkewInfo]]
               shuffleKeyValue.put(i, seq)
               seq
             })
@@ -550,7 +549,7 @@ private[spark] class MapOutputTrackerMaster(
               for (s <- statuses; i <- reduceIds) {
                 totalSizes(i) += s.getSizeForBlock(i)
                 val a = shuffleKeyValue.getOrElse(i, {
-                  val seq = ListBuffer.empty[SkewInfo]
+                  val seq = ListBuffer.empty[Option[SkewInfo]]
                   shuffleKeyValue.put(i, seq)
                   seq
                 })
@@ -566,7 +565,7 @@ private[spark] class MapOutputTrackerMaster(
 
       val skewedKeyValue = shuffleKeyValue.flatMap {
         case(_, skewInfos) =>
-          skewInfos.groupBy(_.obj).map {
+          skewInfos.filter(_.isDefined).map(_.get).groupBy(_.obj).map {
             case(obj, skewInfoList) =>
               val sum = skewInfoList.map(_.count).sum
               obj -> sum
@@ -575,8 +574,11 @@ private[spark] class MapOutputTrackerMaster(
 
       val skewFactor = conf.get(SKEW_FACTOR)
 
-      val avgRecordsPerPartition = totalRecords/dep.partitioner.numPartitions
-      val skew = if (skewedKeyValue._2 > avgRecordsPerPartition * skewFactor ) {
+      val minAvgRecordsPerPartition = conf.get(MIN_AVG_RECORDS_PER_PARTITION)
+
+      val avgRecordsPerPartition = Math.max(totalRecords/dep.partitioner.numPartitions,
+        minAvgRecordsPerPartition)
+      val skew = if (skewedKeyValue._2 > (avgRecordsPerPartition * skewFactor)) {
         Option(skewedKeyValue)
       } else {
         None
