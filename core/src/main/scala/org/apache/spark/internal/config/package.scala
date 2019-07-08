@@ -485,6 +485,16 @@ package object config {
       .booleanConf
       .createWithDefault(true)
 
+  private[spark] val SKEW_FACTOR =
+    ConfigBuilder("spark.skew.factor")
+      .intConf
+      .createWithDefault(5)
+
+  private[spark] val ENABLE_SKEW_OPTIMIZATION =
+    ConfigBuilder("spark.skew.handling.enabled")
+      .booleanConf
+      .createWithDefault(false)
+
   // Blacklist confs
   private[spark] val BLACKLIST_ENABLED =
     ConfigBuilder("spark.blacklist.enabled")
