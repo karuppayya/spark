@@ -21,9 +21,8 @@ import java.io.{ByteArrayOutputStream, Externalizable, IOException, ObjectInput,
 
 import scala.collection.mutable
 import org.roaringbitmap.RoaringBitmap
-import org.apache.spark.SparkEnv
+import org.apache.spark.{SkewInfo, SparkEnv}
 import org.apache.spark.internal.config
-import org.apache.spark.shuffle.sort.SkewInfo
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
@@ -43,8 +42,8 @@ private[spark] sealed trait MapStatus {
    */
   def getSizeForBlock(reduceId: Int): Long
 
-  def getOtherStats(partitionId: Int): SkewInfo = {
-    null
+  def getOtherStats(partitionId: Int): Option[SkewInfo] = {
+    None
   }
 
   def recordsWritten: Long = {
@@ -182,8 +181,9 @@ private[spark] class CompressedMapStatus(
     recordCount = in.readLong()
   }
 
-  override def getOtherStats(partitionId: Int): SkewInfo = {
-      otherStats.get.get(partitionId).get
+  override def getOtherStats(partitionId: Int): Option[SkewInfo] = {
+      val skewInfoOption = otherStats.get.get(partitionId)
+      skewInfoOption.filter(_.obj != null)
   }
 
   override def recordsWritten: Long = {
