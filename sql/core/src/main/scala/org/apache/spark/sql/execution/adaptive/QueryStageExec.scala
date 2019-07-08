@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.execution.adaptive
 
-import scala.concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 
 import org.apache.spark.{FutureAction, MapOutputStatistics}
 import org.apache.spark.broadcast.Broadcast
@@ -25,7 +25,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
-import org.apache.spark.sql.catalyst.plans.physical.Partitioning
+import org.apache.spark.sql.catalyst.plans.physical.{HashPartitioning, Partitioning, RangePartitioning}
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.exchange._
 
@@ -130,6 +130,23 @@ case class ShuffleQueryStageExec(
   }
 
   override def doMaterialize(): Future[Any] = {
+    mapOutputStatisticsFuture.onComplete {
+      res =>
+        res.map {
+          stats =>
+            stats.skewedKeyValue.foreach {
+              skew =>
+                val a = outputPartitioning match {
+                  case h: HashPartitioning =>
+                    h.expressions
+                  case RangePartitioning(sortingExpressions, _) =>
+                    sortingExpressions
+                  case _ => Seq.empty
+                }
+                logError(s"Expression: $a is skewed on $skew")
+            }
+        }
+    }(ExecutionContext.global)
     mapOutputStatisticsFuture
   }
 

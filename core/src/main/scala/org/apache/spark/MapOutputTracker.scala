@@ -27,13 +27,13 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
-
 import org.apache.spark.broadcast.{Broadcast, BroadcastManager}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEndpointRef, RpcEnv}
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.MetadataFetchFailedException
+import org.apache.spark.shuffle.sort.SkewInfo
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId}
 import org.apache.spark.util._
 
@@ -520,8 +520,9 @@ private[spark] class MapOutputTrackerMaster(
    */
   def getStatistics(dep: ShuffleDependency[_, _, _]): MapOutputStatistics = {
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
+      var totalRecords: Long = 0
       val totalSizes = new Array[Long](dep.partitioner.numPartitions)
-      val shuffleKeyValue: Map[Int, ListBuffer[Tuple2[Any, Long]]] = Map.empty
+      val shuffleKeyValue: Map[Int, ListBuffer[SkewInfo]] = Map.empty
       val parallelAggThreshold = conf.get(
         SHUFFLE_MAP_OUTPUT_PARALLEL_AGGREGATION_THRESHOLD)
       val parallelism = math.min(
@@ -529,10 +530,11 @@ private[spark] class MapOutputTrackerMaster(
         statuses.length.toLong * totalSizes.length / parallelAggThreshold + 1).toInt
       if (parallelism <= 1) {
         for (s <- statuses) {
+          totalRecords += s.recordsWritten
           for (i <- 0 until totalSizes.length) {
             totalSizes(i) += s.getSizeForBlock(i)
             val a = shuffleKeyValue.getOrElse(i, {
-              val seq = ListBuffer.empty[Tuple2[Any, Long]]
+              val seq = ListBuffer.empty[SkewInfo]
               shuffleKeyValue.put(i, seq)
               seq
             })
@@ -548,7 +550,7 @@ private[spark] class MapOutputTrackerMaster(
               for (s <- statuses; i <- reduceIds) {
                 totalSizes(i) += s.getSizeForBlock(i)
                 val a = shuffleKeyValue.getOrElse(i, {
-                  val seq = ListBuffer.empty[Tuple2[Any, Long]]
+                  val seq = ListBuffer.empty[SkewInfo]
                   shuffleKeyValue.put(i, seq)
                   seq
                 })
@@ -563,15 +565,23 @@ private[spark] class MapOutputTrackerMaster(
       }
 
       val skewedKeyValue = shuffleKeyValue.flatMap {
-        case(_, x) =>
-          x.groupBy(_._1).map {
-            case(obj, count) =>
-              val sum = count.map(_._2).sum
-              (obj -> sum)
+        case(_, skewInfos) =>
+          skewInfos.groupBy(_.obj).map {
+            case(obj, skewInfoList) =>
+              val sum = skewInfoList.map(_.count).sum
+              obj -> sum
           }
       }.maxBy(_._2)
 
-      new MapOutputStatistics(dep.shuffleId, totalSizes, Option(skewedKeyValue))
+      val skewFactor = conf.get(SKEW_FACTOR)
+
+      val avgRecordsPerPartition = totalRecords/dep.partitioner.numPartitions
+      val skew = if (skewedKeyValue._2 > avgRecordsPerPartition * skewFactor ) {
+        Option(skewedKeyValue)
+      } else {
+        None
+      }
+      new MapOutputStatistics(dep.shuffleId, totalSizes, skew)
     }
   }
 

@@ -94,6 +94,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   @Nullable private MapStatus mapStatus;
   private long[] partitionLengths;
   private ArrayList<SkewKeyHolder> skewedKeys;
+  private boolean handleSkew;
   /**
    * Are we in the process of stopping? Because map tasks can call stop() with success = true
    * and then call stop() with success = false if they get an exception, we want to make sure
@@ -110,6 +111,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       ShuffleWriteMetricsReporter writeMetrics) {
     // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
     this.fileBufferSize = (int) (long) conf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
+    this.handleSkew = SkewUtils.canHandleSkew(conf);
     this.transferToEnabled = conf.getBoolean("spark.file.transferTo", true);
     this.blockManager = blockManager;
     final ShuffleDependency<K, V, V> dep = handle.dependency();
@@ -155,17 +157,17 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     // the disk, and can take a long time in aggregate when we open many files, so should be
     // included in the shuffle write time.
     writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
-
     Object o;
-    Object v;
     while (records.hasNext()) {
 
       final Product2<K, V> record = records.next();
       final K key = record._1();
       if (key instanceof Tuple2) {
         o = ((Tuple2)key)._1();
-        SkewKeyHolder skewKeyHolder = skewedKeys.get((Integer) o);
-        skewKeyHolder.update(((Tuple2)key)._1());
+        if (handleSkew) {
+          SkewKeyHolder skewKeyHolder = skewedKeys.get((Integer) o);
+          skewKeyHolder.update(((Tuple2)key)._2());
+        }
       } else {
         o = key;
       }
@@ -177,8 +179,8 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     long recordsWritten = 0;
     for (int i = 0; i < numPartitions; i++) {
       try (DiskBlockObjectWriter writer = partitionWriters[i]) {
-        partitionWriterSegments[i] = writer.commitAndGet();
         recordsWritten += writer.getRecordsWritten();
+        partitionWriterSegments[i] = writer.commitAndGet();
       }
     }
 
@@ -274,53 +276,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     }
   }
 
-  private Option<List<Tuple2<Object, Long>>> getSkewDetails() {
-    List<Tuple2<Object, Long>> skewInfoList = new ArrayList<>();
+  private Option<List<SkewInfo>> getSkewDetails() {
+    List<SkewInfo> skewInfoList = new ArrayList<>();
     for (SkewKeyHolder holder: skewedKeys) {
-      skewInfoList.add(new Tuple2<>(holder.getKey(), holder.getCount()));
+      skewInfoList.add(SkewInfo.apply(holder.getKey(), holder.getCount()));
     }
     return Option.apply(skewInfoList);
-  }
-
-  private class SkewKeyHolder {
-
-    private int partitionId;
-    private Object currentValue = null;
-    // say all records are unique, then
-    // currentCount > count will never be true
-    private long currentCount = 1;
-
-    private Object key;
-    private long count = -1;
-
-    SkewKeyHolder(int id) {
-      this.partitionId = id;
-    }
-
-
-    public void update(Object value) {
-      // currentValue != value , expensive?
-     if (currentValue != value) {
-        if (currentCount > count) {
-          count = currentCount;
-          key = value;
-        }
-        currentValue = value;
-        currentCount = 0;
-      }
-      currentCount ++;
-    }
-
-    public int getPartitionId() {
-      return partitionId;
-    }
-
-    public Object getKey() {
-      return key;
-    }
-
-    public long getCount() {
-      return count;
-    }
   }
 }
