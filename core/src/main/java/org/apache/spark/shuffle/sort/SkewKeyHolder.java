@@ -25,6 +25,10 @@ class SkewKeyHolder {
     // currentCount > count will never be true
     private long currentCount = 1;
 
+    // Key will never be update when
+    // 1. No elements in theis partition
+    // 2. When there is only one element in the partition
+    // corresponding to this skew holder
     private Object key;
     private long count = -1;
 
@@ -32,6 +36,12 @@ class SkewKeyHolder {
         this.partitionId = partitionId;
     }
 
+    /**
+     * Very Important: Dont add any compute intensive task here
+     * Dont touch this method unless it is absolutely necessary
+     * Keep code minimal
+     * @param value
+     */
     public void update(Object value) {
         // currentValue != value , expensive?
         if (currentValue != value) {
@@ -50,11 +60,19 @@ class SkewKeyHolder {
     }
 
     public Object getKey() {
-        return key;
+        Object retObj = key;
+        if (key == null) {
+            retObj = currentValue;
+        }
+        return retObj;
     }
 
     public long getCount() {
-        return count;
+        long retCount = count;
+        if (key == null) {
+            retCount = currentCount;
+        }
+        return retCount;
     }
 
 }
