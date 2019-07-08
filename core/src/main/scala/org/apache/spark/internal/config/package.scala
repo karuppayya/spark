@@ -477,6 +477,11 @@ package object config {
       .booleanConf
       .createWithDefault(false)
 
+  private[spark] val MIN_AVG_RECORDS_PER_PARTITION =
+    ConfigBuilder("spark.skew.partition.records")
+      .longConf
+      .createWithDefault(2^10)
+
   // Blacklist confs
   private[spark] val BLACKLIST_ENABLED =
     ConfigBuilder("spark.blacklist.enabled")
