@@ -17,7 +17,7 @@
 
 package org.apache.spark.shuffle.sort;
 
-class SkewKeyHolder {
+public class SkewKeyHolder {
 
     private int partitionId;
     private Object currentValue = null;
@@ -32,7 +32,7 @@ class SkewKeyHolder {
     private Object key;
     private long count = -1;
 
-    SkewKeyHolder(int partitionId) {
+    public SkewKeyHolder(int partitionId) {
         this.partitionId = partitionId;
     }
 
