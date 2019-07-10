@@ -20,9 +20,12 @@ package org.apache.spark.scheduler
 import java.io.{ByteArrayOutputStream, Externalizable, IOException, ObjectInput, ObjectOutput}
 
 import scala.collection.mutable
+
 import org.roaringbitmap.RoaringBitmap
-import org.apache.spark.{SkewInfo, SparkEnv}
+
+import org.apache.spark.SparkEnv
 import org.apache.spark.internal.config
+import org.apache.spark.shuffle.sort.SkewInfo
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
@@ -42,13 +45,9 @@ private[spark] sealed trait MapStatus {
    */
   def getSizeForBlock(reduceId: Int): Long
 
-  def getOtherStats(partitionId: Int): Option[SkewInfo] = {
-    None
-  }
+  def getOtherStats(partitionId: Int): Option[SkewInfo] = None
 
-  def recordsWritten: Long = {
-    0
-  }
+  def recordsWritten: Long = 0
 }
 
 
