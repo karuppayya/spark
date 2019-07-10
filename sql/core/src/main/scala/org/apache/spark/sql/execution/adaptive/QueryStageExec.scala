@@ -143,11 +143,43 @@ case class ShuffleQueryStageExec(
                     sortingExpressions
                   case _ => Seq.empty
                 }
-                logError(s"Expression: $a is skewed on $skew")
+                val nodes = collectLeafNodes(this)
+                val found = nodes.find {
+                  node =>
+                    node.output.exists(_.semanticEquals(a.head))
+                }
+                found.map {
+                  x =>
+                  logError(s"Found possible skew in the following plan")
+
+                  if (x.isInstanceOf[FileSourceScanExec]) {
+                    val fs = x.asInstanceOf[FileSourceScanExec]
+                    val table = if (fs.tableIdentifier.isDefined) {
+                      fs.tableIdentifier.get.toString
+                    } else {
+                      fs.relation.location.toString
+                    }
+                    logError(s"Table/Path: $table ")
+                    logError(s"Skew Expression: ${a.head}")
+                  }
+                  logError(s"Skew value: ${skew._1}, frequency: ${skew._2}")
+                }
             }
         }
     }(ExecutionContext.global)
+    this.
     mapOutputStatisticsFuture
+  }
+
+  def collectLeafNodes(plan: SparkPlan): Seq[SparkPlan] = {
+    if (plan.isInstanceOf[QueryStageExec]) {
+      val queryStagePlan = plan.asInstanceOf[QueryStageExec]
+      collectLeafNodes(queryStagePlan.plan)
+    } else {
+      val (querStageExecs, nonQueryStageExecs) =
+        plan.collectLeaves().partition(_.isInstanceOf[QueryStageExec])
+      nonQueryStageExecs ++ querStageExecs.flatMap(collectLeafNodes)
+    }
   }
 
   override def cancel(): Unit = {
