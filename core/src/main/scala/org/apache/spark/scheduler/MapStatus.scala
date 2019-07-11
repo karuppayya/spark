@@ -189,8 +189,12 @@ private[spark] class CompressedMapStatus(
   }
 
   override def getOtherStats(partitionId: Int): Option[SkewInfos] = {
-      val skewInfoOption = otherStats.get.get(partitionId)
-      skewInfoOption.filter(_.infos.forall(_.obj != null))
+      otherStats.flatMap {
+        stats =>
+          stats
+            .get(partitionId)
+            .filter(_.infos.forall(_.obj != null))
+      }
   }
 
   override def recordsWritten: Long = recordCount

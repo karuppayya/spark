@@ -522,7 +522,7 @@ private[spark] class MapOutputTrackerMaster(
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
       var totalRecords: Long = 0
       val totalSizes = new Array[Long](dep.partitioner.numPartitions)
-      val shuffleKeyValue: Map[Int, ListBuffer[Option[SkewInfo]]] = Map.empty
+      val shuffleKeyValue: Map[Int, ListBuffer[SkewInfo]] = Map.empty
       val parallelAggThreshold = conf.get(
         SHUFFLE_MAP_OUTPUT_PARALLEL_AGGREGATION_THRESHOLD)
       val parallelism = math.min(
@@ -533,13 +533,13 @@ private[spark] class MapOutputTrackerMaster(
           totalRecords += s.recordsWritten
           for (i <- 0 until totalSizes.length) {
             totalSizes(i) += s.getSizeForBlock(i)
-            val a = shuffleKeyValue.getOrElse(i, {
-              val seq = ListBuffer.empty[Option[SkewInfo]]
+            val skewInfos = shuffleKeyValue.getOrElse(i, {
+              val seq = ListBuffer.empty[SkewInfo]
               shuffleKeyValue.put(i, seq)
               seq
             })
             val infos = s.getOtherStats(i).map(_.infos)
-            infos.map(in => a ++= in.map(Option(_)))
+            infos.map(in => skewInfos ++= in)
           }
         }
       } else {
@@ -550,13 +550,13 @@ private[spark] class MapOutputTrackerMaster(
             reduceIds => Future {
               for (s <- statuses; i <- reduceIds) {
                 totalSizes(i) += s.getSizeForBlock(i)
-                val a = shuffleKeyValue.getOrElse(i, {
-                  val seq = ListBuffer.empty[Option[SkewInfo]]
+                val skewInfos = shuffleKeyValue.getOrElse(i, {
+                  val seq = ListBuffer.empty[SkewInfo]
                   shuffleKeyValue.put(i, seq)
                   seq
                 })
                 val infos = s.getOtherStats(i).map(_.infos)
-                infos.map(in => a ++= in.map(Option(_)))
+                infos.map(in => skewInfos ++= in)
               }
             }
           }
@@ -568,7 +568,7 @@ private[spark] class MapOutputTrackerMaster(
 
       val skewedKeyValue = shuffleKeyValue.flatMap {
         case(_, skewInfos) =>
-          skewInfos.filter(_.isDefined).map(_.get).groupBy(_.obj).map {
+          skewInfos.groupBy(_.obj).map {
             case(obj, skewInfoList) =>
               val sum = skewInfoList.map(_.count).sum
               obj -> sum
