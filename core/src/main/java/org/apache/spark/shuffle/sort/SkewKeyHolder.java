@@ -40,19 +40,20 @@ public class SkewKeyHolder {
      * Very Important: Dont add any compute intensive task here
      * Dont touch this method unless it is absolutely necessary
      * Keep code minimal
+     *
      * @param value
      */
     public void update(Object value) {
         // currentValue != value , expensive?
-        if (currentValue != value) {
+        if (!value.equals(currentValue)) {
             if (currentCount > count) {
-                count = currentCount;
                 key = currentValue;
+                count = currentCount;
             }
             currentValue = value;
             currentCount = 0;
         }
-        currentCount ++;
+        currentCount++;
     }
 
     public int getPartitionId() {
@@ -60,19 +61,11 @@ public class SkewKeyHolder {
     }
 
     public Object getKey() {
-        Object retObj = key;
-        if (key == null) {
-            retObj = currentValue;
-        }
-        return retObj;
+        return key == null ? currentValue : key;
     }
 
     public long getCount() {
-        long retCount = count;
-        if (key == null) {
-            retCount = currentCount;
-        }
-        return retCount;
+        return key == null ? currentCount : count;
     }
 
 }

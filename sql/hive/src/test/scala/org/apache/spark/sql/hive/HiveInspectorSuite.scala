@@ -34,7 +34,7 @@ import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.util.{ArrayBasedMapData, GenericArrayData, MapData}
 import org.apache.spark.sql.types._
 
-class HiveInspectorSuite extends SparkFunSuite with HiveInspectors {
+class   HiveInspectorSuite extends SparkFunSuite with HiveInspectors {
 
   def unwrap(data: Any, oi: ObjectInspector): Any = {
     val unwrapper = unwrapperFor(oi)

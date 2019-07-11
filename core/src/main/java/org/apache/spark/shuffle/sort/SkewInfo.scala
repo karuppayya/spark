@@ -21,6 +21,11 @@ import org.apache.spark.SparkConf
 
 object SkewUtils {
 
+  /**
+    *
+    * @param conf spark conf
+    * @return true, if skew can be handled
+    */
   def canHandleSkew(conf: SparkConf): Boolean = {
     val sortBeforeRepartitionEnabled =
       conf.getBoolean("spark.sql.execution.sortBeforeRepartition", false)
@@ -30,10 +35,14 @@ object SkewUtils {
   }
 }
 
+/*
+ * @param obj the object that is skewed
+ * @param count frequency of obj
+ */
 case class SkewInfo(obj: Any, count: Long)
 
-/**
-*  Per partition
-  * @param infos
-  */
+/*
+ * Create per partition
+ *
+ */
 case class SkewInfos(infos: Array[SkewInfo])

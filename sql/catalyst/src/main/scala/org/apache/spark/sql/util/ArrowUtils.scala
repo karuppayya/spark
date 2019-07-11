@@ -19,7 +19,7 @@ package org.apache.spark.sql.util
 
 import scala.collection.JavaConverters._
 
-import org.apache.arrow.memory.RootAllocator
+import org.apache.  arrow.memory.RootAllocator
 import org.apache.arrow.vector.types.{DateUnit, FloatingPointPrecision, TimeUnit}
 import org.apache.arrow.vector.types.pojo.{ArrowType, Field, FieldType, Schema}
 
