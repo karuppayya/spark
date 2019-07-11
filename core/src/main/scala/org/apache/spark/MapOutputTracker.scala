@@ -538,7 +538,8 @@ private[spark] class MapOutputTrackerMaster(
               shuffleKeyValue.put(i, seq)
               seq
             })
-            a += s.getOtherStats(i)
+            val infos = s.getOtherStats(i).map(_.infos)
+            infos.map(in => a ++= in.map(Option(_)))
           }
         }
       } else {
@@ -554,7 +555,8 @@ private[spark] class MapOutputTrackerMaster(
                   shuffleKeyValue.put(i, seq)
                   seq
                 })
-                a += s.getOtherStats(i)
+                val infos = s.getOtherStats(i).map(_.infos)
+                infos.map(in => a ++= in.map(Option(_)))
               }
             }
           }
@@ -571,7 +573,7 @@ private[spark] class MapOutputTrackerMaster(
               val sum = skewInfoList.map(_.count).sum
               obj -> sum
           }
-      }.maxBy(_._2)
+      }.toSeq.sortBy(_._2).last
 
       val skewFactor = conf.get(SKEW_FACTOR)
 
