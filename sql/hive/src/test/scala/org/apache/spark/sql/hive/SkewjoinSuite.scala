@@ -17,7 +17,7 @@
 
 package org.apache.spark.sql.hive
 
-import org.apache.spark.{MapOutputTrackerMaster, SparkConf, SparkContext, SparkEnv}
+import org.apache.spark.  {MapOutputTrackerMaster, SparkConf, SparkContext, SparkEnv}
 import org.apache.spark.internal.config
 import org.apache.spark.internal.config.UI.UI_ENABLED
 import org.apache.spark.sql.SparkSession
@@ -34,6 +34,10 @@ case class Employee(id: Int, name: String)
  * Tests for skew detection
  */
 class SkewjoinSuite extends SQLTestUtils {
+
+  val skewTable = "skewtable"
+  val normalTable1 = "tbl1"
+  val normalTable2 = "tbl2"
 
   val spark: SparkSession = {
     val conf: SparkConf = new SparkConf()
@@ -52,47 +56,83 @@ class SkewjoinSuite extends SQLTestUtils {
     new TestHiveSparkSession(HiveUtils.withHiveExternalCatalog(sc), true)
   }
 
-  test("size estimation for relations is based on row size * number of rows") {
-    val skewTable = "skewtable"
-    val normalTable = "tbl"
+  override def beforeAll(): Unit = {
+    super.beforeAll()
+    createTables()
+  }
+
+  def createTables(): Unit = {
 
     import spark.implicits._
-    withTable(skewTable, normalTable) {
-      val df = spark.range(1000).map {
-        x =>
-          if (x < 100) {
-            Employee(1, s"name$x")
-          } else {
-            Employee(x.toInt, s"name$x")
-          }
-      }
-      df.write.saveAsTable(skewTable)
-      spark.range(1000)
-        .write.saveAsTable(normalTable)
-      withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "-1",
-        "spark.sql.shuffle.partitions"-> "200") {
-        val joinDF = spark.sql(s"select * from $skewTable a join $normalTable b ON a.id = b.id")
-        joinDF.collect()
+    spark.range(1000).map {
+      x =>
+        if (x < 100) {
+          Employee(1, s"name$x")
+        } else {
+          Employee(x.toInt, s"name$x")
+        }
+    }.write.saveAsTable(skewTable)
+    spark.range(1000)
+      .write.saveAsTable(normalTable1)
+    spark.range(1000).map(x => Employee(x.toInt, s"name$x"))
+      .write.saveAsTable(normalTable2)
+  }
 
-          val shuffleId = joinDF.queryExecution.executedPlan.collect {
-          case s: ShuffleExchangeExec =>
-            val leaves = s.collectLeaves()
-            val leaf = leaves.head
-            if (leaf.isInstanceOf[FileSourceScanExec] &&
-                leaf.asInstanceOf[FileSourceScanExec].tableIdentifier.get.table == skewTable) {
+  test("size estimation for relations is based on row size * number of rows") {
+
+    withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "-1",
+      "spark.sql.shuffle.partitions" -> "200") {
+      val joinDF = spark.sql(s"select * from $skewTable a join $normalTable1 b ON a.id = b.id")
+      joinDF.collect()
+
+      val shuffleId = joinDF.queryExecution.executedPlan.collect {
+        case s: ShuffleExchangeExec =>
+          val leaves = s.collectLeaves()
+          val leaf = leaves.head
+          leaf match {
+            case l: FileSourceScanExec if l.tableIdentifier.get.table == skewTable =>
               Some(s.shuffleDependency)
-            } else {
+            case _ =>
               None
-            }
-        }.filter(_.isDefined).map(_.get)
+          }
+      }.filter(_.isDefined).map(_.get)
 
-        assert(shuffleId.size == 1, "Incorrect number of shuffle id")
-        val stats = SparkEnv.get.mapOutputTracker
-          .asInstanceOf[MapOutputTrackerMaster]
-          .getStatistics(shuffleId.head)
-        assert(stats.skewedKeyValue.isDefined)
-        assert(stats.skewedKeyValue.get._2 == 100)
-      }
+      assert(shuffleId.size == 1, "Incorrect number of shuffle id")
+      val stats = SparkEnv.get.mapOutputTracker
+        .asInstanceOf[MapOutputTrackerMaster]
+        .getStatistics(shuffleId.head)
+      assert(stats.skewedKeyValue.isDefined)
+      assert(stats.skewedKeyValue.get._2 == 100)
     }
   }
+
+  test("size estimation for relations is based on row size * number of rows1") {
+
+    withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "-1",
+      "spark.sql.shuffle.partitions" -> "200") {
+      val joinDF = spark.sql(s"select * from $normalTable1 a join $normalTable2 b ON a.id = b.id")
+      joinDF.collect()
+
+      val shuffleId = joinDF.queryExecution.executedPlan.collect {
+        case s: ShuffleExchangeExec =>
+          val leaves = s.collectLeaves()
+          val leaf = leaves.head
+          leaf match {
+            case l: FileSourceScanExec =>
+              Some(s.shuffleDependency)
+            case _ =>
+              None
+          }
+      }.filter(_.isDefined).map(_.get)
+
+      assert(shuffleId.size == 2, "Incorrect number of shuffle id")
+      val statsEmpty = shuffleId.map {
+        id => SparkEnv.get.mapOutputTracker
+          .asInstanceOf[MapOutputTrackerMaster]
+          .getStatistics(id)
+      }.forall(_.skewedKeyValue.isEmpty)
+      assert(statsEmpty   )
+    }
+  }
+
 }
