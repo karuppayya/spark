@@ -31,3 +31,9 @@ object SkewUtils {
 }
 
 case class SkewInfo(obj: Any, count: Long)
+
+/**
+*  Per partition
+  * @param infos
+  */
+case class SkewInfos(infos: Array[SkewInfo])

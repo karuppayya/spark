@@ -276,11 +276,13 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     }
   }
 
-  private Option<List<SkewInfo>> getSkewDetails() {
-    List<SkewInfo> skewInfoList = new ArrayList<>();
+  private Option<List<SkewInfos>> getSkewDetails() {
+    List<SkewInfos> infos = new ArrayList<>();
     for (SkewKeyHolder holder: skewedKeys) {
-      skewInfoList.add(SkewInfo.apply(holder.getKey(), holder.getCount()));
+      SkewInfo[] skewInfoList = new SkewInfo[1];
+      skewInfoList[0] = (SkewInfo.apply(holder.getKey(), holder.getCount()));
+      infos.add(SkewInfos.apply(skewInfoList));
     }
-    return Option.apply(skewInfoList);
+    return Option.apply(infos);
   }
 }

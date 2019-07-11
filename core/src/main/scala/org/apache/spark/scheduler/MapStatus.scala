@@ -25,7 +25,7 @@ import org.roaringbitmap.RoaringBitmap
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.config
-import org.apache.spark.shuffle.sort.SkewInfo
+import org.apache.spark.shuffle.sort.{SkewInfo, SkewInfos}
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
@@ -45,7 +45,7 @@ private[spark] sealed trait MapStatus {
    */
   def getSizeForBlock(reduceId: Int): Long
 
-  def getOtherStats(partitionId: Int): Option[SkewInfo] = None
+  def getOtherStats(partitionId: Int): Option[SkewInfos] = None
 
   def recordsWritten: Long = 0
 }
@@ -62,7 +62,7 @@ private[spark] object MapStatus {
     .getOrElse(config.SHUFFLE_MIN_NUM_PARTS_TO_HIGHLY_COMPRESS.defaultValue.get)
 
   def apply(loc: BlockManagerId, uncompressedSizes: Array[Long],
-            skewedKeys: Option[java.util.List[SkewInfo]] = None,
+            skewedKeys: Option[java.util.List[SkewInfos]] = None,
             totalRecords: Long = 0L): MapStatus = {
     if (uncompressedSizes.length > minPartitionsToUseHighlyCompressMapStatus) {
       HighlyCompressedMapStatus(loc, uncompressedSizes)
@@ -70,7 +70,7 @@ private[spark] object MapStatus {
       if (skewedKeys.isDefined) {
         import scala.collection.JavaConverters._
         val sKeys = skewedKeys.get
-        val scal = sKeys.asScala.asInstanceOf[Seq[SkewInfo]]
+        val scal = sKeys.asScala.asInstanceOf[Seq[SkewInfos]]
         val mapSt = (1 to scal.size).zip(scal).toMap
         new CompressedMapStatus(loc, uncompressedSizes, mapSt, totalRecords)
       } else {
@@ -119,7 +119,7 @@ private[spark] object MapStatus {
 private[spark] class CompressedMapStatus(
     private[this] var loc: BlockManagerId,
     private[this] var compressedSizes: Array[Byte],
-    private[this] var otherStats: Option[Map[Int, SkewInfo]] = None,
+    private[this] var otherStats: Option[Map[Int, SkewInfos]] = None,
     private[this] var recordCount: Long = 0)
   extends MapStatus with Externalizable {
 
@@ -131,10 +131,11 @@ private[spark] class CompressedMapStatus(
 
   def this(loc: BlockManagerId,
      uncompressedSizes: Array[Long],
-     otherStast: Map[Int, SkewInfo],
+     otherStast: Map[Int, SkewInfos],
      recordsWritten: Long ) {
     this(loc, uncompressedSizes.map(MapStatus.compressSize),
       Option(otherStast), recordsWritten)
+
   }
 
   override def location: BlockManagerId = loc
@@ -148,14 +149,19 @@ private[spark] class CompressedMapStatus(
     out.writeInt(compressedSizes.length)
     out.write(compressedSizes)
     val bos: ByteArrayOutputStream = new ByteArrayOutputStream()
-    out.writeBoolean(otherStats.nonEmpty)
-    if (otherStats.nonEmpty) {
+    val hasStats = otherStats.isDefined && otherStats.get.nonEmpty
+    out.writeBoolean(hasStats)
+    if (hasStats) {
       val (_, values) = otherStats.get.unzip
       out.writeInt(values.size)
       values.foreach {
-        case SkewInfo(key, value) =>
-          out.writeObject(key)
-          out.writeLong(value)
+        case SkewInfos(infos) =>
+          assert(infos.size == 1)
+          infos.foreach {
+            i =>
+              out.writeObject(i.obj)
+              out.writeLong(i.count)
+          }
       }
     }
     out.writeLong(recordCount)
@@ -173,21 +179,21 @@ private[spark] class CompressedMapStatus(
         index =>
           val key = in.readObject()
           val value = in.readLong()
-          SkewInfo(key, value)
+          val info = Array(SkewInfo(key, value))
+          SkewInfos(info)
+
       }
       otherStats = Option((0 until stats.size).zip(stats).toMap)
     }
     recordCount = in.readLong()
   }
 
-  override def getOtherStats(partitionId: Int): Option[SkewInfo] = {
+  override def getOtherStats(partitionId: Int): Option[SkewInfos] = {
       val skewInfoOption = otherStats.get.get(partitionId)
-      skewInfoOption.filter(_.obj != null)
+      skewInfoOption.filter(_.infos.forall(_.obj != null))
   }
 
-  override def recordsWritten: Long = {
-    recordCount
-  }
+  override def recordsWritten: Long = recordCount
 }
 
 /**
