@@ -17,12 +17,12 @@
 
 package org.apache.spark.sql.hive
 
-import org.apache.spark.  {MapOutputTrackerMaster, SparkConf, SparkContext, SparkEnv}
+import org.apache.spark.{MapOutputTrackerMaster, SparkConf, SparkContext, SparkEnv}
 import org.apache.spark.internal.config
 import org.apache.spark.internal.config.UI.UI_ENABLED
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.optimizer.ConvertToLocalRelation
-import org.apache.spark.sql.execution.FileSourceScanExec
+import org.apache.spark.sql.execution.{FileSourceScanExec, SparkPlan}
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeExec
 import org.apache.spark.sql.hive.test.{TestHiveContext, TestHiveSparkSession}
 import org.apache.spark.sql.internal.SQLConf
@@ -78,24 +78,14 @@ class SkewjoinSuite extends SQLTestUtils {
       .write.saveAsTable(normalTable2)
   }
 
-  test("size estimation for relations is based on row size * number of rows") {
+  test("statistics should contain skewed value for a skewed table") {
 
     withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "-1",
       "spark.sql.shuffle.partitions" -> "200") {
       val joinDF = spark.sql(s"select * from $skewTable a join $normalTable1 b ON a.id = b.id")
       joinDF.collect()
 
-      val shuffleId = joinDF.queryExecution.executedPlan.collect {
-        case s: ShuffleExchangeExec =>
-          val leaves = s.collectLeaves()
-          val leaf = leaves.head
-          leaf match {
-            case l: FileSourceScanExec if l.tableIdentifier.get.table == skewTable =>
-              Some(s.shuffleDependency)
-            case _ =>
-              None
-          }
-      }.filter(_.isDefined).map(_.get)
+      val shuffleId = getShuffleDeps(joinDF.queryExecution.executedPlan, Option(skewTable))
 
       assert(shuffleId.size == 1, "Incorrect number of shuffle id")
       val stats = SparkEnv.get.mapOutputTracker
@@ -106,24 +96,13 @@ class SkewjoinSuite extends SQLTestUtils {
     }
   }
 
-  test("size estimation for relations is based on row size * number of rows1") {
-
+  test("statistics should not contain skew values for a non skewed table") {
     withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "-1",
       "spark.sql.shuffle.partitions" -> "200") {
       val joinDF = spark.sql(s"select * from $normalTable1 a join $normalTable2 b ON a.id = b.id")
       joinDF.collect()
 
-      val shuffleId = joinDF.queryExecution.executedPlan.collect {
-        case s: ShuffleExchangeExec =>
-          val leaves = s.collectLeaves()
-          val leaf = leaves.head
-          leaf match {
-            case l: FileSourceScanExec =>
-              Some(s.shuffleDependency)
-            case _ =>
-              None
-          }
-      }.filter(_.isDefined).map(_.get)
+      val shuffleId = getShuffleDeps(joinDF.queryExecution.executedPlan)
 
       assert(shuffleId.size == 2, "Incorrect number of shuffle id")
       val statsEmpty = shuffleId.map {
@@ -135,4 +114,45 @@ class SkewjoinSuite extends SQLTestUtils {
     }
   }
 
+  test("each Map status should contain no more than one skewed value") {
+    val  numShufflePartitions = 200
+    withSQLConf("spark.sql.autoBroadcastJoinThreshold" -> "-1",
+      "spark.sql.shuffle.partitions" -> s"$numShufflePartitions") {
+      val joinDF = spark.sql(s"select * from $skewTable a join $normalTable1 b ON a.id = b.id")
+      joinDF.collect()
+
+      val shuffleId = getShuffleDeps(joinDF.queryExecution.executedPlan, Option(skewTable))
+
+      assert(shuffleId.size == 1, "Incorrect number of shuffle id")
+      val statuses = SparkEnv.get.mapOutputTracker
+        .asInstanceOf[MapOutputTrackerMaster]
+        .shuffleStatuses.get(shuffleId.head.shuffleId)
+      statuses.forall {
+        shuffleStatus =>
+          shuffleStatus.mapStatuses.forall {
+            mapStatus =>
+              (0 to numShufflePartitions).forall {
+                partitionId =>
+                  mapStatus.getOtherStats(partitionId).isEmpty ||
+                    mapStatus.getOtherStats(partitionId).get.infos.length ==1
+              }
+          }
+      }
+    }
+  }
+
+  private def getShuffleDeps(plan: SparkPlan, tableName: Option[String] = None) = {
+    plan.collect {
+      case s: ShuffleExchangeExec =>
+        val leaves = s.collectLeaves()
+        val leaf = leaves.head
+        leaf match {
+          case l: FileSourceScanExec
+            if tableName.isEmpty || l.tableIdentifier.get.table == tableName.get =>
+            Some(s.shuffleDependency)
+          case _ =>
+            None
+        }
+    }.filter(_.isDefined).map(_.get)
+  }
 }
