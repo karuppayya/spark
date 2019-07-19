@@ -178,8 +178,6 @@ private[spark] class ExternalSorter[K, V, C](
     val shouldCombine = aggregator.isDefined
 
 
-    val skewKeyHolderArr: Array[SkewKeyHolder]
-    = (0 to numPartitions).map(new SkewKeyHolder(_)).toArray
     if (shouldCombine) {
       // Combine values in-memory first using our AppendOnlyMap
       val mergeValue = aggregator.get.mergeValue
@@ -200,7 +198,6 @@ private[spark] class ExternalSorter[K, V, C](
         addElementsRead()
         val kv = records.next()
         val partition = getPartition(kv._1)
-        skewKeyHolderArr(partition).update(kv._1)
         buffer.insert(partition, kv._1, kv._2.asInstanceOf[C])
         maybeSpillCollection(usingMap = false)
       }

@@ -150,8 +150,7 @@ case class ShuffleQueryStageExec(
                 }
                 found.map {
                   x =>
-                  logError(s"Found possible skew in the following plan")
-
+                  logError(s"Skew found")
                   if (x.isInstanceOf[FileSourceScanExec]) {
                     val fs = x.asInstanceOf[FileSourceScanExec]
                     val table = if (fs.tableIdentifier.isDefined) {
@@ -160,7 +159,7 @@ case class ShuffleQueryStageExec(
                       fs.relation.location.toString
                     }
                     logError(s"Table/Path: $table ")
-                    logError(s"Skew Expression: ${a.head}")
+                    logError(s"Skew Expression: ${a}")
                   }
                   logError(s"Skew value: ${skew._1}, frequency: ${skew._2}")
                 }
