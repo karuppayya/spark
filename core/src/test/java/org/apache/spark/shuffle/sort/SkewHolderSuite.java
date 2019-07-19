@@ -34,7 +34,7 @@ public class SkewHolderSuite {
 
   @Test
   public void offsetsPastMaxOffsetInPageWillOverflow() {
-    SkewKeyHolder holder = new SkewKeyHolder(0);
+    SkewKeyHolder holder = new SkewKeyHolder(0, null);
     Integer[] values = new Integer[] {
             new Integer(0),
             new Integer(1),

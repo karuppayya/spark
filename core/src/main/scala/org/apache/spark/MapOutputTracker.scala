@@ -573,7 +573,7 @@ private[spark] class MapOutputTrackerMaster(
               val sum = skewInfoList.map(_.count).sum
               obj -> sum
           }
-      }.toSeq.sortBy(_._2).last
+      }.toSeq.sortBy(_._2).lastOption
 
       val skewFactor = conf.get(SKEW_FACTOR)
 
@@ -581,11 +581,15 @@ private[spark] class MapOutputTrackerMaster(
 
       val avgRecordsPerPartition = Math.max(totalRecords/dep.partitioner.numPartitions,
         minAvgRecordsPerPartition)
-      val skew = if (skewedKeyValue._2 > (avgRecordsPerPartition * skewFactor)) {
-        Option(skewedKeyValue)
-      } else {
-        None
+      val skew = skewedKeyValue.flatMap {
+        case(value, frequency) =>
+          if (frequency > (avgRecordsPerPartition * skewFactor)) {
+            Option((value -> frequency))
+          } else {
+            None
+          }
       }
+
       new MapOutputStatistics(dep.shuffleId, totalSizes, skew)
     }
   }

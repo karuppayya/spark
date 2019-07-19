@@ -75,7 +75,8 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     val keyOrdering: Option[Ordering[K]] = None,
     val aggregator: Option[Aggregator[K, V, C]] = None,
     val mapSideCombine: Boolean = false,
-    val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor)
+    val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
+    val valueOrdering: Option[Ordering[V]] = None)
   extends Dependency[Product2[K, V]] {
 
   if (mapSideCombine) {

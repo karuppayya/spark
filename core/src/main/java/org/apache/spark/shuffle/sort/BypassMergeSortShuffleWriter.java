@@ -53,6 +53,7 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter;
 import org.apache.spark.shuffle.ShuffleWriter;
 import org.apache.spark.storage.*;
 import org.apache.spark.util.Utils;
+import scala.math.Ordering;
 
 /**
  * This class implements sort-based shuffle's hash-style shuffle fallback path. This write path
@@ -90,6 +91,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private final long mapTaskAttemptId;
   private final Serializer serializer;
   private final ShuffleExecutorComponents shuffleExecutorComponents;
+  private final Ordering ordering;
 
   /** Array of file writers, one for each partition */
   private DiskBlockObjectWriter[] partitionWriters;
@@ -97,7 +99,6 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   @Nullable private MapStatus mapStatus;
   private long[] partitionLengths;
   private ArrayList<SkewKeyHolder> skewedKeys;
-  private boolean handleSkew;
   /**
    * Are we in the process of stopping? Because map tasks can call stop() with success = true
    * and then call stop() with success = false if they get an exception, we want to make sure
@@ -115,7 +116,6 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       ShuffleExecutorComponents shuffleExecutorComponents) {
     // Use getSizeAsKb (not bytes) to maintain backwards compatibility if no units are provided
     this.fileBufferSize = (int) (long) conf.get(package$.MODULE$.SHUFFLE_FILE_BUFFER_SIZE()) * 1024;
-    this.handleSkew = SkewUtils.canHandleSkew(conf);
     this.transferToEnabled = conf.getBoolean("spark.file.transferTo", true);
     this.blockManager = blockManager;
     final ShuffleDependency<K, V, V> dep = handle.dependency();
@@ -127,6 +127,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.writeMetrics = writeMetrics;
     this.serializer = dep.serializer();
     this.shuffleExecutorComponents = shuffleExecutorComponents;
+    if (dep.valueOrdering().isDefined()) {
+      this.ordering = dep.valueOrdering().get();
+    } else {
+      this.ordering = null;
+    }
   }
 
   @Override
@@ -146,8 +151,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
 
       skewedKeys = new ArrayList<>(numPartitions);
 
-      for(int i=0; i< numPartitions; i++) {
-        skewedKeys.add(i, new SkewKeyHolder(i));
+      if (ordering != null) {
+        skewedKeys = new ArrayList<>(numPartitions);
+        for(int i=0; i < numPartitions; i++) {
+          skewedKeys.add(i, new SkewKeyHolder<V>(i, ordering));
+        }
       }
 
       final SerializerInstance serInstance = serializer.newInstance();
@@ -175,7 +183,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         if (key instanceof Tuple2) {
           o = ((Tuple2)key)._1();
           v = ((Tuple2)key)._2();
-          if (handleSkew) {
+          if (ordering != null) {
             SkewKeyHolder skewKeyHolder = skewedKeys.get((Integer) o);
             skewKeyHolder.update(((Tuple2)key)._2());
           }

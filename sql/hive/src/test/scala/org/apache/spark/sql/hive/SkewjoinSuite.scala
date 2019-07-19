@@ -41,7 +41,6 @@ class SkewjoinSuite extends SQLTestUtils {
 
   val spark: SparkSession = {
     val conf: SparkConf = new SparkConf()
-    conf
       .set("spark.sql.test", "")
       .set(SQLConf.CODEGEN_FALLBACK.key, "false")
       .set("spark.sql.warehouse.dir", TestHiveContext.makeWarehouseDir().toURI.getPath)
@@ -72,7 +71,7 @@ class SkewjoinSuite extends SQLTestUtils {
           Employee(x.toInt, s"name$x")
         }
     }.write.saveAsTable(skewTable)
-    spark.range(1000)
+    spark.range(1000).map(x => Employee(x.toInt, s"name$x"))
       .write.saveAsTable(normalTable1)
     spark.range(1000).map(x => Employee(x.toInt, s"name$x"))
       .write.saveAsTable(normalTable2)
