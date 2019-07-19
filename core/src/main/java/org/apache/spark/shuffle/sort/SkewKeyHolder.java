@@ -17,10 +17,12 @@
 
 package org.apache.spark.shuffle.sort;
 
-public class SkewKeyHolder {
+import scala.math.Ordering;
+
+public class SkewKeyHolder<V> {
 
     private int partitionId;
-    private Object currentValue = null;
+    private V currentValue = null;
     // say all records are unique, then
     // currentCount > count will never be true
     private long currentCount = 1;
@@ -29,11 +31,13 @@ public class SkewKeyHolder {
     // 1. No elements in theis partition
     // 2. When there is only one element in the partition
     // corresponding to this skew holder
-    private Object key;
+    private V key;
     private long count = -1;
+    private Ordering<V> order;
 
-    public SkewKeyHolder(int partitionId) {
+    public SkewKeyHolder(int partitionId, Ordering<V> order) {
         this.partitionId = partitionId;
+        this.order = order;
     }
 
     /**
@@ -43,9 +47,13 @@ public class SkewKeyHolder {
      *
      * @param value
      */
-    public void update(Object value) {
+    public void update(V value) {
         // currentValue != value , expensive?
-        if (!value.equals(currentValue)) {
+        if (currentValue == null) {
+            currentValue = value;
+            currentCount = 0;
+        }
+        if (order.compare(currentValue, value) != 0) {
             if (currentCount > count) {
                 key = currentValue;
                 count = currentCount;
@@ -60,7 +68,7 @@ public class SkewKeyHolder {
         return partitionId;
     }
 
-    public Object getKey() {
+    public V getKey() {
         return key == null ? currentValue : key;
     }
 

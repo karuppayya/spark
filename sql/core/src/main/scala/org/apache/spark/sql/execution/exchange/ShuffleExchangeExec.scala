@@ -29,7 +29,7 @@ import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.errors._
 import org.apache.spark.sql.catalyst.expressions.{Attribute, BoundReference, UnsafeProjection, UnsafeRow}
-import org.apache.spark.sql.catalyst.expressions.codegen.LazilyGeneratedOrdering
+import org.apache.spark.sql.catalyst.expressions.codegen.{GenerateOrdering, LazilyGeneratedOrdering}
 import org.apache.spark.sql.catalyst.plans.physical._
 import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
@@ -268,7 +268,13 @@ object ShuffleExchangeExec {
         val newExprs = Seq(h.partitionIdExpression) ++ h.expressions
         val projection = UnsafeProjection.create(newExprs, outputAttributes)
         row => {
-          (projection(row).getInt(0) -> projection(row).getInt(1))
+
+          val rowProjection = projection(row)
+          val values = (1 until rowProjection.numFields()).map {
+            idx =>
+              rowProjection.get(idx, h.expressions(idx - 1).dataType)
+          }
+          (projection(row).getInt(0) -> InternalRow.fromSeq(values))
         }
       case RangePartitioning(sortingExpressions, _) =>
         val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
@@ -281,6 +287,24 @@ object ShuffleExchangeExec {
         }
       case _ => sys.error(s"Exchange not implemented for $newPartitioning")
     }
+
+    def getOrdering(): Option[Ordering[InternalRow]] =
+      if (org.apache.spark.shuffle.sort.SkewUtils.canHandleSkew(SparkEnv.get.conf)) {
+        newPartitioning match {
+          case h: HashPartitioning =>
+            if (h.expressions.forall(_.isInstanceOf[Attribute]) ) {
+              val schema = StructType.fromAttributes(h.expressions.map(_.asInstanceOf[Attribute]))
+              val ordering = LazilyGeneratedOrdering.forSchema(schema)
+              Option(ordering)
+            } else {
+              None
+            }
+          case _ => None
+        }
+      } else {
+        None
+      }
+
 
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
@@ -358,9 +382,9 @@ object ShuffleExchangeExec {
         rddWithPartitionIds,
         new PartitionIdPassthrough(part.numPartitions),
         serializer,
-        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics))
-
-    dependency
+        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
+        valueOrdering = getOrdering())
+      dependency
   }
 
   /**
