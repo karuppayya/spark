@@ -23,6 +23,7 @@ package org.apache.spark
  * @param shuffleId ID of the shuffle
  * @param bytesByPartitionId approximate number of output bytes for each map output partition
  *   (may be inexact due to use of compressed map statuses)
+ * @param skewedKeyValue probable values on which data is skewed
  */
 private[spark] class MapOutputStatistics(val shuffleId: Int, val bytesByPartitionId: Array[Long],
                                     val skewedKeyValue: Option[Tuple2[Any, Long]] = None)

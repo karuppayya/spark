@@ -17,7 +17,10 @@
 
 package org.apache.spark.shuffle.sort;
 
+import com.google.common.collect.MinMaxPriorityQueue;
 import scala.math.Ordering;
+
+import java.util.Comparator;
 
 public class SkewKeyHolder<V> {
 
@@ -34,10 +37,29 @@ public class SkewKeyHolder<V> {
     private V key;
     private long count = -1;
     private Ordering<V> order;
+    private MinMaxPriorityQueue<SkewInfo> queue;
+    private int size = 3;
 
     public SkewKeyHolder(int partitionId, Ordering<V> order) {
+
         this.partitionId = partitionId;
         this.order = order;
+        Comparator<SkewInfo> comparator = new Comparator<SkewInfo>() {
+            @Override
+            public int compare(SkewInfo o1, SkewInfo o2) {
+                long count1 = o1.count();
+                long count2 = o2.count();
+                if (count1 == count2) {
+                    return 0;
+                } else {
+                    return count1 > count2 ? -1: 1;
+                }
+            }
+        };
+        queue = MinMaxPriorityQueue
+                .orderedBy(comparator)
+                .maximumSize(size)
+                .create();
     }
 
     /**
@@ -45,7 +67,7 @@ public class SkewKeyHolder<V> {
      * Dont touch this method unless it is absolutely necessary
      * Keep code minimal
      *
-     * @param value
+     * @param value the vaue with which skewholder needs to be updated
      */
     public void update(V value) {
         // currentValue != value , expensive?
@@ -57,6 +79,7 @@ public class SkewKeyHolder<V> {
             if (currentCount > count) {
                 key = currentValue;
                 count = currentCount;
+                queue.add(new SkewInfo(key, count));
             }
             currentValue = value;
             currentCount = 0;
@@ -68,12 +91,14 @@ public class SkewKeyHolder<V> {
         return partitionId;
     }
 
-    public V getKey() {
-        return key == null ? currentValue : key;
-    }
+    public SkewInfo[] getSkewedKeys() {
+        if (key == null ){
 
-    public long getCount() {
-        return key == null ? currentCount : count;
+           return new SkewInfo[] {
+               new SkewInfo(key, count)
+           };
+        }
+        SkewInfo[] obj = new SkewInfo[queue.size()];
+        return queue.toArray(obj);
     }
-
 }
