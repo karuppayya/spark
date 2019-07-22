@@ -17,7 +17,7 @@
 
 package org.apache.spark.scheduler
 
-import java.io.{ByteArrayOutputStream, Externalizable, IOException, ObjectInput, ObjectOutput}
+import java.io.{Externalizable, ObjectInput, ObjectOutput}
 
 import scala.collection.mutable
 
@@ -148,7 +148,6 @@ private[spark] class CompressedMapStatus(
     loc.writeExternal(out)
     out.writeInt(compressedSizes.length)
     out.write(compressedSizes)
-    val bos: ByteArrayOutputStream = new ByteArrayOutputStream()
     val hasStats = otherStats.isDefined && otherStats.get.nonEmpty
     out.writeBoolean(hasStats)
     if (hasStats) {
@@ -156,7 +155,7 @@ private[spark] class CompressedMapStatus(
       out.writeInt(values.size)
       values.foreach {
         case SkewInfos(infos) =>
-          assert(infos.size == 1)
+          // assert(infos.size == 1)
           infos.foreach {
             i =>
               out.writeObject(i.obj)

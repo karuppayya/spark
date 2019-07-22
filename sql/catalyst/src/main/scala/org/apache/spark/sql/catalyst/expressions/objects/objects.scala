@@ -1344,7 +1344,7 @@ case class ExternalMapToCatalyst private(
         val defineKeyValue =
           s"""
             final $javaMapEntryCls $entry = ($javaMapEntryCls) $entries.next();
-            $key = (${CodeGenerator.boxedType(keyType)}) $entry.getKey();
+            $key = (${CodeGenerator.boxedType(keyType)}) $entry.getSkewedKeys();
             $value = (${CodeGenerator.boxedType(valueType)}) $entry.getValue();
           """
 

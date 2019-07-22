@@ -670,7 +670,7 @@ case class HashAggregateExec(
     def outputFromRowBasedMap: String = {
       s"""
          |while ($iterTermForFastHashMap.next()) {
-         |  UnsafeRow $keyTerm = (UnsafeRow) $iterTermForFastHashMap.getKey();
+         |  UnsafeRow $keyTerm = (UnsafeRow) $iterTermForFastHashMap.getSkewedKeys();
          |  UnsafeRow $bufferTerm = (UnsafeRow) $iterTermForFastHashMap.getValue();
          |  $outputFunc($keyTerm, $bufferTerm);
          |
@@ -710,7 +710,7 @@ case class HashAggregateExec(
     def outputFromRegularHashMap: String = {
       s"""
          |while ($limitNotReachedCond $iterTerm.next()) {
-         |  UnsafeRow $keyTerm = (UnsafeRow) $iterTerm.getKey();
+         |  UnsafeRow $keyTerm = (UnsafeRow) $iterTerm.getSkewedKeys();
          |  UnsafeRow $bufferTerm = (UnsafeRow) $iterTerm.getValue();
          |  $outputFunc($keyTerm, $bufferTerm);
          |  if (shouldStop()) return;
