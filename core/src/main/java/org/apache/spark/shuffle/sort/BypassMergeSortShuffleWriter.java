@@ -98,7 +98,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private FileSegment[] partitionWriterSegments;
   @Nullable private MapStatus mapStatus;
   private long[] partitionLengths;
-  private ArrayList<SkewKeyHolder> skewedKeys;
+  private List<SkewKeyHolder> skewedKeys;
   /**
    * Are we in the process of stopping? Because map tasks can call stop() with success = true
    * and then call stop() with success = false if they get an exception, we want to make sure
@@ -338,8 +338,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       return Option.empty();
     }
     for (SkewKeyHolder holder: skewedKeys) {
-      SkewInfo[] skewInfoList = new SkewInfo[1];
-      skewInfoList[0] = (SkewInfo.apply(holder.getKey(), holder.getCount()));
+      SkewInfo[] skewInfoList = holder.getSkewedKeys();
       infos.add(SkewInfos.apply(skewInfoList));
     }
     return Option.apply(infos);

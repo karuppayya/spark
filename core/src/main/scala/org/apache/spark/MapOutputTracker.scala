@@ -521,8 +521,8 @@ private[spark] class MapOutputTrackerMaster(
   def getStatistics(dep: ShuffleDependency[_, _, _]): MapOutputStatistics = {
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
       var totalRecords: Long = 0
-      val totalSizes = new Array[Long](dep.partitioner.numPartitions)
       val shuffleKeyValue: Map[Int, ListBuffer[SkewInfo]] = Map.empty
+      val totalSizes = new Array[Long](dep.partitioner.numPartitions)
       val parallelAggThreshold = conf.get(
         SHUFFLE_MAP_OUTPUT_PARALLEL_AGGREGATION_THRESHOLD)
       val parallelism = math.min(

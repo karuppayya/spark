@@ -38,7 +38,7 @@ sealed trait StreamingAggregationStateManager extends Serializable {
 
   /**
    * Put a new value for a non-null key to the target state store. Note that key will be
-   * extracted from the input row, and the key would be same as the result of getKey(inputRow).
+   * extracted from the input row, and the key would be same as the result of getSkewedKeys(inputRow).
    */
   def put(store: StateStore, row: UnsafeRow): Unit
 
