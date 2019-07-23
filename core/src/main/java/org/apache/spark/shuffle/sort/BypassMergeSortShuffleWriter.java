@@ -26,6 +26,7 @@ import java.util.Optional;
 import java.util.*;
 import javax.annotation.Nullable;
 
+import org.apache.spark.SparkEnv;
 import scala.None$;
 import scala.Option;
 import scala.Product2;
@@ -149,9 +150,8 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         return;
       }
 
-      skewedKeys = new ArrayList<>(numPartitions);
-
       if (ordering != null) {
+        int queueSize = SparkEnv.get().conf().getInt("spark.skew.holder.queue.size", 3);
         skewedKeys = new ArrayList<>(numPartitions);
         for(int i=0; i < numPartitions; i++) {
           skewedKeys.add(i, new SkewKeyHolder<V>(i, ordering));
@@ -176,13 +176,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       writeMetrics.incWriteTime(System.nanoTime() - openStartTime);
 
       Object o;
-      Object v;
       while (records.hasNext()) {
         final Product2<K, V> record = records.next();
         final K key = record._1();
         if (key instanceof Tuple2) {
           o = ((Tuple2)key)._1();
-          v = ((Tuple2)key)._2();
           if (ordering != null) {
             SkewKeyHolder skewKeyHolder = skewedKeys.get((Integer) o);
             skewKeyHolder.update(((Tuple2)key)._2());
@@ -192,6 +190,11 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         }
         int partition = partitioner.getPartition(o);
         partitionWriters[partitioner.getPartition(partition)].write(key, record._2());
+      }
+
+      // close all the skew holders
+      for (SkewKeyHolder holder: skewedKeys) {
+        holder.close();
       }
 
       long recordsWritten = 0;
