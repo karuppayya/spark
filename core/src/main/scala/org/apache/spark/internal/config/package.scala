@@ -490,6 +490,12 @@ package object config {
       .intConf
       .createWithDefault(5)
 
+  private[spark] val SKEW_HOLDER_QUEUE_SIZE =
+    ConfigBuilder("spark.skew.holder.queue.size")
+      .intConf
+      .createWithDefault(3)
+
+
   private[spark] val ENABLE_SKEW_OPTIMIZATION =
     ConfigBuilder("spark.skew.handling.enabled")
       .booleanConf

@@ -18,32 +18,31 @@
 package org.apache.spark.shuffle.sort;
 
 import com.google.common.collect.MinMaxPriorityQueue;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import scala.math.Ordering;
 
 import java.util.Comparator;
 
 public class SkewKeyHolder<V> {
 
+    private static final Logger logger = LoggerFactory.getLogger(SkewKeyHolder.class);
     private int partitionId;
     private V currentValue = null;
-    // say all records are unique, then
-    // currentCount > count will never be true
     private long currentCount = 1;
 
-    // Key will never be update when
-    // 1. No elements in theis partition
-    // 2. When there is only one element in the partition
-    // corresponding to this skew holder
-    private V key;
-    private long count = -1;
-    private Ordering<V> order;
+    private Ordering<V> ordering;
+    // TODO: if queue size is 1, dont need queue, Optimize!!
     private MinMaxPriorityQueue<SkewInfo> queue;
-    private int size = 3;
+    private boolean isClosed = false;
 
-    public SkewKeyHolder(int partitionId, Ordering<V> order) {
-
+    public SkewKeyHolder(int partitionId, Ordering<V> ordering, int queueSize) {
+        if (ordering == null) {
+            logger.error("Cannot create skew key holder with empty ordering");
+            throw new RuntimeException("Specify an ordering");
+        }
         this.partitionId = partitionId;
-        this.order = order;
+        this.ordering = ordering;
         Comparator<SkewInfo> comparator = new Comparator<SkewInfo>() {
             @Override
             public int compare(SkewInfo o1, SkewInfo o2) {
@@ -58,8 +57,12 @@ public class SkewKeyHolder<V> {
         };
         queue = MinMaxPriorityQueue
                 .orderedBy(comparator)
-                .maximumSize(size)
+                .maximumSize(queueSize)
                 .create();
+    }
+
+    public SkewKeyHolder(int partitionId, Ordering<V> ordering) {
+        this(partitionId, ordering, 3);
     }
 
     /**
@@ -75,12 +78,8 @@ public class SkewKeyHolder<V> {
             currentValue = value;
             currentCount = 0;
         }
-        if (order.compare(currentValue, value) != 0) {
-            if (currentCount > count) {
-                key = currentValue;
-                count = currentCount;
-                queue.add(new SkewInfo(key, count));
-            }
+        if (ordering.compare(currentValue, value) != 0) {
+            queue.add(new SkewInfo(currentValue, currentCount));
             currentValue = value;
             currentCount = 0;
         }
@@ -92,13 +91,20 @@ public class SkewKeyHolder<V> {
     }
 
     public SkewInfo[] getSkewedKeys() {
-        if (key == null ){
-
-           return new SkewInfo[] {
-               new SkewInfo(key, count)
-           };
+        if (!isClosed) {
+            String msg = "Cannot get skewed keys without closing the holder";
+            logger.error(msg);
+            throw new RuntimeException(msg);
         }
+        assert isClosed : "Holder is not closed";
         SkewInfo[] obj = new SkewInfo[queue.size()];
         return queue.toArray(obj);
+    }
+
+    public void close() {
+        isClosed = true;
+        if (currentValue != null) {
+            queue.add(new SkewInfo(currentValue, currentCount));
+        }
     }
 }
