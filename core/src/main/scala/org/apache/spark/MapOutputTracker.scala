@@ -27,6 +27,7 @@ import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
+
 import org.apache.spark.broadcast.{Broadcast, BroadcastManager}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
@@ -566,31 +567,29 @@ private[spark] class MapOutputTrackerMaster(
         }
       }
 
-      val skewedKeyValue = shuffleKeyValue.flatMap {
-        case(_, skewInfos) =>
+      val keysPerPartition: Array[Seq[Tuple2[Any, Long]]] = shuffleKeyValue.map {
+        case(partId, skewInfos) =>
           skewInfos.groupBy(_.obj).map {
             case(obj, skewInfoList) =>
               val sum = skewInfoList.map(_.count).sum
               obj -> sum
-          }
-      }.toSeq.sortBy(_._2).lastOption
+          }.toSeq.sortBy(_._2)(Ordering[Long].reverse)
+      }.toArray
 
+      val sumWithinPartition: Seq[Long] = keysPerPartition.map(_.map(_._2).sum)
       val skewFactor = conf.get(SKEW_FACTOR)
-
       val minAvgRecordsPerPartition = conf.get(MIN_AVG_RECORDS_PER_PARTITION)
-
       val avgRecordsPerPartition = Math.max(totalRecords/dep.partitioner.numPartitions,
         minAvgRecordsPerPartition)
-      val skew = skewedKeyValue.flatMap {
-        case(value, frequency) =>
-          if (frequency > (avgRecordsPerPartition * skewFactor)) {
-            Option((value -> frequency))
-          } else {
-            None
-          }
-      }
 
-      new MapOutputStatistics(dep.shuffleId, totalSizes, skew)
+      val skewRecordThreshold = ((totalRecords/dep.partitioner.numPartitions) * skewFactor).round
+      val skewedPartitions = sumWithinPartition.zipWithIndex
+        .filter(_._1 > skewRecordThreshold)
+        .map(_._2)
+      // currently take the first skewed partition and its first value
+      val candidateSkewKey = skewedPartitions.headOption.flatMap(keysPerPartition(_).headOption)
+
+      new MapOutputStatistics(dep.shuffleId, totalSizes, candidateSkewKey)
     }
   }
 

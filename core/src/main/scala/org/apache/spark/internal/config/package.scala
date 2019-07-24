@@ -492,8 +492,9 @@ package object config {
 
   private[spark] val SKEW_FACTOR =
     ConfigBuilder("spark.skew.factor")
-      .intConf
-      .createWithDefault(5)
+      .doubleConf
+      .checkValue( factor => factor < 1 && factor > 0, "skew factor should be between 0 and 1")
+      .createWithDefault(.5)
 
   private[spark] val SKEW_HOLDER_QUEUE_SIZE =
     ConfigBuilder("spark.skew.holder.queue.size")
