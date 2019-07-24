@@ -182,8 +182,10 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     }
 
     // close all the skew holders
-    for (SkewKeyHolder holder: skewedKeys) {
-      holder.close();
+    if (ordering != null) {
+      for (SkewKeyHolder holder: skewedKeys) {
+        holder.close();
+      }
     }
 
     long recordsWritten = 0;

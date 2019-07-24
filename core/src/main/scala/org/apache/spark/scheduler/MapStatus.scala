@@ -156,6 +156,7 @@ private[spark] class CompressedMapStatus(
       values.foreach {
         case SkewInfos(infos) =>
           // assert(infos.size == 1)
+          out.writeInt(infos.length)
           infos.foreach {
             i =>
               out.writeObject(i.obj)
@@ -176,11 +177,14 @@ private[spark] class CompressedMapStatus(
       val num = in.readInt()
       val stats = (1 to num).map {
         index =>
-          val key = in.readObject()
-          val value = in.readLong()
-          val info = Array(SkewInfo(key, value))
-          SkewInfos(info)
-
+          val size = in.readInt()
+          val infos = (0 until size).map {
+            x =>
+              val key = in.readObject()
+              val value = in.readLong()
+              SkewInfo(key, value)
+          }.toArray
+          SkewInfos(infos)
       }
       otherStats = Option((0 until stats.size).zip(stats).toMap)
     }
