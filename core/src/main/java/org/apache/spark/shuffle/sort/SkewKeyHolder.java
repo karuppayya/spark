@@ -48,11 +48,7 @@ public class SkewKeyHolder<V> {
             public int compare(SkewInfo o1, SkewInfo o2) {
                 long count1 = o1.count();
                 long count2 = o2.count();
-                if (count1 == count2) {
-                    return 0;
-                } else {
-                    return count1 > count2 ? -1: 1;
-                }
+                return (int)(count2 - count1);
             }
         };
         queue = MinMaxPriorityQueue
