@@ -179,17 +179,19 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       while (records.hasNext()) {
         final Product2<K, V> record = records.next();
         final K key = record._1();
+        int partition = -1;
         if (key instanceof Tuple2) {
           o = ((Tuple2)key)._1();
+          partition = partitioner.getPartition(o);
           if (ordering != null) {
-            SkewKeyHolder skewKeyHolder = skewedKeys.get((Integer) o);
+            SkewKeyHolder skewKeyHolder = skewedKeys.get(partition);
             skewKeyHolder.update(((Tuple2)key)._2());
           }
         } else {
           o = key;
+          partition = partitioner.getPartition(o);
         }
-        int partition = partitioner.getPartition(o);
-        partitionWriters[partitioner.getPartition(partition)].write(key, record._2());
+        partitionWriters[partition].write(o, record._2());
       }
 
       // close all the skew holders
