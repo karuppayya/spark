@@ -18,7 +18,6 @@
 package org.apache.spark.sql.execution.adaptive
 
 import scala.concurrent.Future
-
 import org.apache.spark.{FutureAction, MapOutputStatistics}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.rdd.RDD
@@ -26,7 +25,7 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.Statistics
 import org.apache.spark.sql.catalyst.plans.physical.Partitioning
-import org.apache.spark.sql.execution._
+import org.apache.spark.sql.execution.{SkewUtils, _}
 import org.apache.spark.sql.execution.exchange._
 
 
@@ -140,6 +139,40 @@ case class ShuffleQueryStageExec(
   override def doMaterialize(): Future[Any] = {
     mapOutputStatisticsFuture
   }
+
+  /**
+    * Compute the statistics of the query stage if executed, otherwise None.
+    */
+  override def computeStats(): Option[Statistics] = {
+    val maybeStatistics = super.computeStats()
+    val skewInfo = getSkewedValues
+    if (skewInfo.isDefined) {
+      // TODO: KARU remove this line
+      println(  s" Skewed values: $skewInfo")
+    }
+    maybeStatistics.map(_.copy(skewInfo = skewInfo))
+  }
+
+  private def getSkewedValues = {
+    resultOption.flatMap { iter =>
+      iter match {
+        case mapStats: MapOutputStatistics =>
+          mapStats.stats.get(SkewUtils.SKEW)
+            .flatMap { values =>
+              values.flatMap { v =>
+                v match {
+                  case skewValues: Seq[Tuple2[_, _]] =>
+                    Option(skewValues.map(_._1))
+                  case _ => None
+                }
+              }
+            }
+        case _ =>
+          None
+      }
+    }
+  }
+
 
   override def cancel(): Unit = {
     mapOutputStatisticsFuture match {

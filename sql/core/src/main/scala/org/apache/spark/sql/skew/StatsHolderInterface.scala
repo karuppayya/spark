@@ -15,14 +15,49 @@
  * limitations under the License.
  */
 
-package org.apache.spark
+package org.apache.spark.sql.skew
 
-/**
- * Holds statistics about the output sizes in a map stage. May become a DeveloperApi in the future.
+import org.apache.spark.skew.StatInfo
+
+
+/*
+ * Interface used to collect stats
  *
- * @param shuffleId ID of the shuffle
- * @param bytesByPartitionId approximate number of output bytes for each map output partition
- *   (may be inexact due to use of compressed map statuses)
  */
-private[spark] class MapOutputStatistics(val shuffleId: Int, val bytesByPartitionId: Array[Long],
-   val stats: Map[String, Option[_]] = Map.empty)
+private[spark] trait StatsHolderInterface[V] {
+
+  /*
+   * Called for every record in the mapper partition
+   */
+  def update(value: V)
+
+  /*
+   * Gets stats for the mapper partition
+   */
+  def getStatsInternal: Seq[StatInfo]
+
+  /*
+   * Closes the holder
+   */
+  def close(): Unit
+
+  def reset(): Unit
+
+  /*
+   * Checks whether holder is closed
+   */
+  def isClosed: Boolean
+
+
+  def getStats: Seq[StatInfo] = {
+    if (!isClosed) {
+      throw new RuntimeException("Cannot get stats without closing the holder")
+    }
+    getStatsInternal
+  }
+
+  /*
+   * Get number of records in this mapper partition
+   */
+  def getRecordsCount: Long
+}

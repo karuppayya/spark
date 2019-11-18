@@ -2049,6 +2049,12 @@ object SQLConf {
       .stringConf
       .createWithDefault(
         "https://maven-central.storage-download.googleapis.com/repos/central/data/")
+
+  private[spark] val SKEW_HOLDER_QUEUE_SIZE =
+    buildConf("spark.sql.qubole.skew.holder.queue.size")
+      .doc("Number of skew values to hold per partition")
+      .intConf
+      .createWithDefault(3)
 }
 
 /**
@@ -2116,6 +2122,8 @@ class SQLConf extends Serializable with Logging {
   def fileSourceLogCompactInterval: Int = getConf(FILE_SOURCE_LOG_COMPACT_INTERVAL)
 
   def fileSourceLogCleanupDelay: Long = getConf(FILE_SOURCE_LOG_CLEANUP_DELAY)
+
+  def skewQueueSize: Int = getConf(SQLConf.SKEW_HOLDER_QUEUE_SIZE)
 
   def streamingSchemaInference: Boolean = getConf(STREAMING_SCHEMA_INFERENCE)
 

@@ -56,7 +56,8 @@ import org.apache.spark.util.Utils
 case class Statistics(
     sizeInBytes: BigInt,
     rowCount: Option[BigInt] = None,
-    attributeStats: AttributeMap[ColumnStat] = AttributeMap(Nil)) {
+    attributeStats: AttributeMap[ColumnStat] = AttributeMap(Nil),
+    skewInfo: Option[Seq[Any]] = None) {
 
   override def toString: String = "Statistics(" + simpleString + ")"
 

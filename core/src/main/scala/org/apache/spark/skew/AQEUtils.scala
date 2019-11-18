@@ -15,14 +15,29 @@
  * limitations under the License.
  */
 
-package org.apache.spark
+package org.apache.spark.skew
 
-/**
- * Holds statistics about the output sizes in a map stage. May become a DeveloperApi in the future.
+private[spark] case class Metric(name: String, value: Any)
+
+/*
+ * Container for stats for a particular record
  *
- * @param shuffleId ID of the shuffle
- * @param bytesByPartitionId approximate number of output bytes for each map output partition
- *   (may be inexact due to use of compressed map statuses)
+ * @param obj the object for which stats are collected
+ * @param count frequency of obj
  */
-private[spark] class MapOutputStatistics(val shuffleId: Int, val bytesByPartitionId: Array[Long],
-   val stats: Map[String, Option[_]] = Map.empty)
+private[spark] case class StatInfo(obj: Any, metrics: Seq[Metric]) {
+
+  def getMetric(name: String): Any = {
+    metrics.find( _.name == name).map(_.value).getOrElse(0L)
+  }
+}
+
+/*
+ * Created per partition
+ *
+ */
+private[spark] case class ShufflePartitionInfo(infos: Seq[StatInfo], var recordCount: Long = 0)
+
+private[spark] object StatInfo {
+  val COUNT_METRIC_NAME = "count"
+}

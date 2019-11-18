@@ -21,22 +21,23 @@ import java.io.{ByteArrayInputStream, ObjectInputStream, ObjectOutputStream}
 import java.util.concurrent.{ConcurrentHashMap, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
 import java.util.concurrent.locks.ReentrantReadWriteLock
 
+import org.apache.commons.io.output.{ByteArrayOutputStream => ApacheByteArrayOutputStream}
 import scala.collection.JavaConverters._
+import scala.collection.immutable.{Map => mutableMap}
 import scala.collection.mutable.{HashMap, ListBuffer, Map}
 import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
-import org.apache.commons.io.output.{ByteArrayOutputStream => ApacheByteArrayOutputStream}
-
 import org.apache.spark.broadcast.{Broadcast, BroadcastManager}
 import org.apache.spark.internal.Logging
-import org.apache.spark.internal.config._
+import org.apache.spark.internal.config.{MIN_SKEW_TOTAL_RECORDS, SKEW_FACTOR, _}
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEndpointRef, RpcEnv}
 import org.apache.spark.scheduler.{ExecutorCacheTaskLocation, MapStatus}
 import org.apache.spark.shuffle.MetadataFetchFailedException
+import org.apache.spark.skew.StatInfo
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId}
 import org.apache.spark.util._
 
@@ -578,27 +579,37 @@ private[spark] class MapOutputTrackerMaster(
    */
   def getStatistics(dep: ShuffleDependency[_, _, _]): MapOutputStatistics = {
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
+      var totalRecords: Long = 0
       val totalSizes = new Array[Long](dep.partitioner.numPartitions)
+      val shuffleKeyValue: Map[Int, ListBuffer[StatInfo]] = Map.empty
       val parallelAggThreshold = conf.get(
         SHUFFLE_MAP_OUTPUT_PARALLEL_AGGREGATION_THRESHOLD)
       val parallelism = math.min(
         Runtime.getRuntime.availableProcessors(),
         statuses.length.toLong * totalSizes.length / parallelAggThreshold + 1).toInt
-      if (parallelism <= 1) {
+
+      def computeStats(statuses: Seq[MapStatus], reduceIds: Seq[Int]): Unit = {
         for (s <- statuses) {
-          for (i <- 0 until totalSizes.length) {
+          totalRecords += s.recordsWritten
+          for (i <- reduceIds) {
             totalSizes(i) += s.getSizeForBlock(i)
+            val skewInfosOpt = shuffleKeyValue.getOrElse(i, ListBuffer.empty[StatInfo])
+            val infos = s.getStats(i).map(_.infos)
+            infos.map(in => skewInfosOpt ++= in)
+            shuffleKeyValue.put(i, skewInfosOpt)
+
           }
         }
+      }
+
+      if (parallelism <= 1) {
+        computeStats(statuses, 0 until totalSizes.length)
       } else {
         val threadPool = ThreadUtils.newDaemonFixedThreadPool(parallelism, "map-output-aggregate")
         try {
           implicit val executionContext = ExecutionContext.fromExecutor(threadPool)
           val mapStatusSubmitTasks = equallyDivide(totalSizes.length, parallelism).map {
-            reduceIds => Future {
-              for (s <- statuses; i <- reduceIds) {
-                totalSizes(i) += s.getSizeForBlock(i)
-              }
+            reduceIds => Future {computeStats(statuses, reduceIds)
             }
           }
           ThreadUtils.awaitResult(Future.sequence(mapStatusSubmitTasks), Duration.Inf)
@@ -606,8 +617,46 @@ private[spark] class MapOutputTrackerMaster(
           threadPool.shutdown()
         }
       }
-      new MapOutputStatistics(dep.shuffleId, totalSizes)
+      val statsMap = getSkewedValues(shuffleKeyValue, totalRecords, dep.partitioner.numPartitions)
+      new MapOutputStatistics(dep.shuffleId, totalSizes, statsMap)
     }
+  }
+
+
+  /**
+    *
+    * Returns n(determined by spark.skew.value.threshold)
+    * skewed values of a mapper stage
+    *
+    * @param shuffleKeyValue partition id to stats map
+    * @param totalRecords total number of records processed
+    * @param numReducers number of reducers
+    * @return the skew values of the tables
+    */
+  private def getSkewedValues(shuffleKeyValue: Map[Int, ListBuffer[StatInfo]],
+                              totalRecords: Long,
+                              numReducers: Int) = {
+    val minSkewTotalRecords = conf.get(MIN_SKEW_TOTAL_RECORDS)
+    val skewedKeys = if (totalRecords <= minSkewTotalRecords) {
+      log.debug("Skipping skew join optimization due to min record threshold.")
+      None
+    } else {
+      val keyCountMapping = shuffleKeyValue.map {
+        case(partId, skewInfos) =>
+          skewInfos.groupBy(_.obj).map {
+            case(obj, skewInfoList) =>
+              val sum = skewInfoList.map(_.getMetric("count").asInstanceOf[Long]).sum
+              obj -> sum
+          }.toSeq.sortBy(_._2)(Ordering[Long].reverse)
+      }.flatten.toSeq.sortBy(_._2 )(Ordering[Long].reverse)
+
+      val skewFactor = conf.get(SKEW_FACTOR)
+      val skewRecordThreshold = totalRecords * skewFactor
+
+      val skewedValues = keyCountMapping.filter(_._2 > skewRecordThreshold)
+      if (skewedValues.isEmpty) None else Option(skewedValues)
+    }
+    mutableMap("skew" -> skewedKeys)
   }
 
   /**

@@ -35,6 +35,7 @@ import org.apache.spark.sql.execution._
 import org.apache.spark.sql.execution.adaptive.LocalShuffledRowRDD
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics, SQLShuffleReadMetricsReporter, SQLShuffleWriteMetricsReporter}
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.skew.ShuffleStatsIterator
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.MutablePair
 import org.apache.spark.util.collection.unsafe.sort.{PrefixComparators, RecordComparator}
@@ -228,6 +229,27 @@ object ShuffleExchangeExec {
       case _ => sys.error(s"Exchange not implemented for $newPartitioning")
     }
 
+    def getUnsafePartitionValueExtractor(): Option[MutablePair[Int, InternalRow] => InternalRow] =
+      newPartitioning match {
+        case h: HashPartitioning if SkewUtils.canHandleSkew() =>
+          val projection = UnsafeProjection.create(h.expressions, outputAttributes)
+          Some(row => projection(row._2))
+        case _ => None
+      }
+
+    def getSafePartitionValueExtractor(): Option[InternalRow => InternalRow] =
+      newPartitioning match {
+        case h: HashPartitioning if SkewUtils.canHandleSkew() =>
+          val projection = UnsafeProjection.create(h.expressions, outputAttributes)
+          Some(row => {
+            val values = (0 until row.numFields).map {
+              idx => row.get(idx, h.expressions(idx).dataType)
+            }
+            InternalRow.fromSeq(values)
+          })
+        case _ => None
+      }
+
     val isRoundRobin = newPartitioning.isInstanceOf[RoundRobinPartitioning] &&
       newPartitioning.numPartitions > 1
 
@@ -288,8 +310,17 @@ object ShuffleExchangeExec {
       } else {
         newRdd.mapPartitionsWithIndexInternal((_, iter) => {
           val getPartitionKey = getPartitionKeyExtractor()
+          val getPartitionValue = getUnsafePartitionValueExtractor()
+          val getsafePartitionValue = getSafePartitionValueExtractor()
           val mutablePair = new MutablePair[Int, InternalRow]()
-          iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
+          val rowIter =
+            iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
+          val newIter =
+            for (unsafeValueExtractor <- getPartitionValue;
+                 safeValueExtractor <- getsafePartitionValue)
+              yield new ShuffleStatsIterator(rowIter, newPartitioning.numPartitions,
+                unsafeValueExtractor, safeValueExtractor)
+          newIter.getOrElse(rowIter)
         }, isOrderSensitive = isOrderSensitive)
       }
     }

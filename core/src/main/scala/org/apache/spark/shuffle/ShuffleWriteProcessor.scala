@@ -20,7 +20,8 @@ package org.apache.spark.shuffle
 import org.apache.spark.{Partition, ShuffleDependency, SparkEnv, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
-import org.apache.spark.scheduler.MapStatus
+import org.apache.spark.scheduler.{CompressedMapStatus, MapStatus}
+import org.apache.spark.skew.StatsGetter
 
 /**
  * The interface for customizing shuffle write process. The driver create a ShuffleWriteProcessor
@@ -55,9 +56,23 @@ private[spark] class ShuffleWriteProcessor extends Serializable with Logging {
         mapId,
         context,
         createMetricsReporter(context))
-      writer.write(
-        rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]])
-      writer.stop(success = true).get
+      val iter = rdd.iterator(partition, context).asInstanceOf[Iterator[_ <: Product2[Any, Any]]]
+      writer.write(iter)
+      val mapStatus = writer.stop(success = true).get
+      iter match {
+        case statGetter: StatsGetter if (statGetter.getStats.isDefined) =>
+          mapStatus match {
+            case s: CompressedMapStatus =>
+              val stats = statGetter.getStats.get
+              val totalRecordCount = stats.map(_.recordCount).sum
+              s.stats = statGetter.getStats
+              s.recordCount = totalRecordCount
+              s
+            case s => s  // TODO: KARU handle org.apache.spark.scheduler.HighlyCompressedMapStatus
+          }
+        case _ =>
+          mapStatus
+      }
     } catch {
       case e: Exception =>
         try {

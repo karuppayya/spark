@@ -15,14 +15,10 @@
  * limitations under the License.
  */
 
-package org.apache.spark
+package org.apache.spark.skew
 
-/**
- * Holds statistics about the output sizes in a map stage. May become a DeveloperApi in the future.
- *
- * @param shuffleId ID of the shuffle
- * @param bytesByPartitionId approximate number of output bytes for each map output partition
- *   (may be inexact due to use of compressed map statuses)
- */
-private[spark] class MapOutputStatistics(val shuffleId: Int, val bytesByPartitionId: Array[Long],
-   val stats: Map[String, Option[_]] = Map.empty)
+private[spark] trait StatsGetter {
+
+  def getStats : Option[Seq[ShufflePartitionInfo]]
+
+}

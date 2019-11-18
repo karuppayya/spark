@@ -586,6 +586,18 @@ package object config {
       .createWithDefault(false)
   // End blacklist confs
 
+  private[spark] val SKEW_FACTOR =
+    ConfigBuilder("spark.skew.factor")
+      .doubleConf
+      .checkValue( factor => factor < 1 && factor > 0, "skew factor should be between 0 and 1")
+      .createWithDefault(.1)
+
+  private[spark] val MIN_SKEW_TOTAL_RECORDS =
+    ConfigBuilder("spark.skew.min.total.records")
+      .longConf
+      .createWithDefault(10^5)
+
+
   private[spark] val UNREGISTER_OUTPUT_ON_HOST_ON_FETCH_FAILURE =
     ConfigBuilder("spark.files.fetchFailure.unRegisterOutputOnHost")
       .doc("Whether to un-register all the outputs on the host in condition that we receive " +

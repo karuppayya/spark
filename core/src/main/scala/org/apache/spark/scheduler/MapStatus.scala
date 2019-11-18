@@ -25,6 +25,7 @@ import org.roaringbitmap.RoaringBitmap
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.config
+import org.apache.spark.skew.ShufflePartitionInfo
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
@@ -49,6 +50,11 @@ private[spark] sealed trait MapStatus {
    * partitionId of the task or taskContext.taskAttemptId is used.
    */
   def mapId: Long
+
+  def getStats(partitionId: Int): Option[ShufflePartitionInfo] = None
+
+  def recordsWritten: Long = 0
+
 }
 
 
@@ -107,14 +113,18 @@ private[spark] object MapStatus {
  * A [[MapStatus]] implementation that tracks the size of each block. Size for each block is
  * represented using a single byte.
  *
- * @param loc location where the task is being executed.
+ * @param loc             location where the task is being executed.
  * @param compressedSizes size of the blocks, indexed by reduce partition id.
- * @param _mapTaskId unique task id for the task
+ * @param _mapTaskId      unique task id for the task
+ * @param stats stats per shuffle partition
+ * @param recordCount Total number of records in this map partition
  */
 private[spark] class CompressedMapStatus(
     private[this] var loc: BlockManagerId,
     private[this] var compressedSizes: Array[Byte],
-    private[this] var _mapTaskId: Long)
+    private[this] var _mapTaskId: Long,
+    var stats: Option[Seq[ShufflePartitionInfo]] = None,
+    var recordCount: Long = 0)
   extends MapStatus with Externalizable {
 
   // For deserialization only
