@@ -36,6 +36,21 @@
 
   <dependencies>
     <dependency>
+       <groupId>com.amazonaws</groupId>
+       <artifactId>aws-java-sdk</artifactId>
+       <version>1.7.4</version>
+    </dependency>
+    <dependency>
+       <groupId>com.eclipsesource.minimal-json</groupId>
+       <artifactId>minimal-json</artifactId>
+       <version>0.9.4</version>
+    </dependency>
+   <!-- <dependency>
+       <groupId>com.amazon.redshift</groupId>
+       <artifactId>redshift-jdbc42</artifactId>
+       <version>1.2.36.1060</version>
+    </dependency> -->
+    <dependency>
       <groupId>com.univocity</groupId>
       <artifactId>univocity-parsers</artifactId>
       <type>jar</type>
