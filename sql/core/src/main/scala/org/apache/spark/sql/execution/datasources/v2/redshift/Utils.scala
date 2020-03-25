@@ -33,6 +33,11 @@ import org.slf4j.LoggerFactory
  */
 private[redshift] object Utils {
 
+  /** configuration key for delimiter */
+  val KEY_DELIMITER = "redshift.delimiter"
+  /** default delimiter */
+  val DEFAULT_DELIMITER = '|'
+
   private val log = LoggerFactory.getLogger(getClass)
 
   def classForName(className: String): Class[_] = {
@@ -206,7 +211,13 @@ private[redshift] object Utils {
   }
 
   // FIXME
-  def getDelimiter: String = {
-    ""
+  def getDelimiter(conf: Configuration): Char = {
+    val c = conf.get(KEY_DELIMITER, DEFAULT_DELIMITER.toString)
+    if (c.length != 1) {
+      throw new IllegalArgumentException(s"Expect delimiter be a single character but got '$c'.")
+    } else {
+      c.charAt(0)
+    }
   }
+
 }

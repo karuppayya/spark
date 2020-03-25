@@ -17,31 +17,37 @@
 
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import org.apache.hadoop.fs.FileStatus
+import scala.collection.JavaConverters._
+
+import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.connector.read.ScanBuilder
 import org.apache.spark.sql.connector.write.{LogicalWriteInfo, WriteBuilder}
-import org.apache.spark.sql.execution.datasources.FileFormat
+import org.apache.spark.sql.execution.datasources.{DataSource, FileFormat, FileStatusCache, InMemoryFileIndex}
 import org.apache.spark.sql.execution.datasources.v2.FileTable
+import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
+import org.apache.spark.sql.execution.streaming.{FileStreamSink, MetadataLogFileIndex}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 case class RedshiftTable(tableName: String,
     spark: SparkSession,
     options: CaseInsensitiveStringMap,
-    paths: Seq[String],
+    JDBCWrapper: JDBCWrapper,
     userSpecifiedSchema: Option[StructType],
     fallbackFileFormat: Class[_ <: FileFormat])
-  extends FileTable(spark, options, paths, userSpecifiedSchema) {
+  extends FileTable(spark, options, Seq.empty, userSpecifiedSchema) {
+
+  val params = Parameters.mergeParameters(options.asScala.toMap)
+
   /**
    * When possible, this method should return the schema of the given `files`.  When the format
    * does not support inference, or no valid files are given should return None.  In these cases
    * Spark will require that user specify the schema manually.
    */
   override def inferSchema(files: Seq[FileStatus]): Option[StructType] = {
-    // Schema is provided by caller.
-    None
+    userSpecifiedSchema
   }
 
   /**
@@ -53,7 +59,7 @@ case class RedshiftTable(tableName: String,
    * }}}
    */
   override def formatName: String = {
-      "redshift"
+    "redshift"
   }
 
 
@@ -65,7 +71,17 @@ case class RedshiftTable(tableName: String,
    *                string-to-string map.
    */
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
-    null
+    val preProcessor = new RedshiftPreProcessor(spark, params)
+    val paths = preProcessor.process(Some(dataSchema))
+    // This is a non-streaming file based datasource.
+    val rootPathsSpecified = DataSource.checkAndGlobPathIfNecessary(paths,
+      spark.sparkContext.hadoopConfiguration, checkEmptyGlobPath = true, checkFilesExist = true)
+    val fileStatusCache = FileStatusCache.getOrCreate(spark)
+    val caseSensitiveMap = options.asCaseSensitiveMap.asScala.toMap
+    val index = new InMemoryFileIndex(
+      spark, rootPathsSpecified, caseSensitiveMap, userSpecifiedSchema, fileStatusCache)
+
+    RedshiftScanBuilder(spark, index, schema, dataSchema, options)
   }
 
   /**
@@ -81,4 +97,5 @@ case class RedshiftTable(tableName: String,
    * database and table name from catalog, or the location of files for this table.
    */
   override def name(): String = "redshift"
+
 }

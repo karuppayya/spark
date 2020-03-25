@@ -16,39 +16,41 @@
  */
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.hadoop.mapreduce.{JobID, TaskAttemptID, TaskID, TaskType}
 import org.apache.hadoop.mapreduce.lib.input.FileSplit
 import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
 
+import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.read.PartitionReader
+import org.apache.spark.sql.types.StructType
+import org.apache.spark.util.SerializableConfiguration
 
 class RedshiftPartitionReader(path: String,
     start: Long,
     length: Long,
     locations: Array[String],
-    conf: Configuration) extends PartitionReader[InternalRow] {
+    schema: StructType,
+    conf: Broadcast[SerializableConfiguration]) extends PartitionReader[InternalRow] {
 
   new FileSplit(new Path(path), start, length, locations)
 
-  val recordReader = new RedshiftRecordReader
-  // FIXME
-  recordReader.initialize(new FileSplit(new Path(path), start, length, locations),
-    null)
   val attemptId = new TaskAttemptID(new TaskID(new JobID(), TaskType.MAP, 0), 0)
-  val hadoopAttemptContext = new TaskAttemptContextImpl(conf, attemptId)
+  val hadoopAttemptContext = new TaskAttemptContextImpl(conf.value.value, attemptId)
+  val recordReader = new RedshiftRecordReader
+  recordReader.initialize(new FileSplit(new Path(path), start, length, locations),
+    hadoopAttemptContext)
   val iter = new RecordReaderIterator[Array[String]](recordReader)
-  val converter = Conversions.createRowConverter(null,
+  val converter = Conversions.createRowConverter(schema,
     Parameters.DEFAULT_PARAMETERS("csvnullstring"))
 
   override def next(): Boolean = {
-    return iter.hasNext
+    iter.hasNext
   }
 
   override def get(): InternalRow = {
-    return converter(iter.next())
+    converter(iter.next())
   }
 
   override def close(): Unit = {

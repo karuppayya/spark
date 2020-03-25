@@ -17,7 +17,6 @@
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
 import java.io.{BufferedInputStream, IOException}
-import java.lang.{Long => JavaLong}
 import java.nio.charset.Charset
 
 import scala.collection.mutable.ArrayBuffer
@@ -50,7 +49,7 @@ private[redshift] class RedshiftRecordReader extends RecordReader[Long, Array[St
     val split = inputSplit.asInstanceOf[FileSplit]
     val file = split.getPath
     val conf: Configuration = context.getConfiguration
-    delimiter = Utils.getDelimiter.asInstanceOf[Byte]
+    delimiter = Utils.getDelimiter(conf).asInstanceOf[Byte]
     require(delimiter != escapeChar,
       s"The delimiter and the escape char cannot be the same but found $delimiter.")
     require(delimiter != lineFeed, "The delimiter cannot be the lineFeed character.")

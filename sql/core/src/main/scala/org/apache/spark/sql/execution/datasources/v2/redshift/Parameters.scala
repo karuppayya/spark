@@ -292,5 +292,9 @@ private[redshift] object Parameters {
      * include in the COPY command (e.g. `COPY "PUBLIC"."tablename" ("column1" [,"column2", ...])`)
      */
     def includeColumnList: Boolean = parameters("include_column_list").toBoolean
+
+    def getTableNameOrSubquery: String = {
+        query.map(q => s"($q)").orElse(table.map(_.toString)).get
+    }
   }
 }

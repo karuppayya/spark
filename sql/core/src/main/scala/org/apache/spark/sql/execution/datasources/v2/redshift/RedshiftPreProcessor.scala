@@ -30,61 +30,22 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.encoders.RowEncoder
-import org.apache.spark.sql.connector.catalog.Table
-import org.apache.spark.sql.execution.datasources.FileFormat
-import org.apache.spark.sql.execution.datasources.v2.FileDataSourceV2
 import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
-import org.apache.spark.sql.sources.{DataSourceRegister, Filter}
+import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
+class RedshiftPreProcessor(spark: SparkSession, params: MergedParameters) extends Logging {
 
-class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with Logging  {
-
-  /**
-   * Returns a V1 [[FileFormat]] class of the same file data source.
-   * This is a solution for the following cases:
-   * 1. File datasource V2 implementations cause regression. Users can disable the problematic data
-   * source via SQL configuration and fall back to FileFormat.
-   * 2. Catalog support is required, which is still under development for data source V2.
-   */
-    // FIXME
-  override def fallbackFileFormat: Class[_ <: FileFormat] = null
-
-  private var params: MergedParameters = _
-
-  private val jdbcWrapper = DefaultJDBCWrapper
-
-  // var table: Option[Table] = None
-  override def shortName(): String = "redshift"
-
-  var schema: Option[StructType] = None
-
-  override def getTable(options: CaseInsensitiveStringMap): Table = {
-    initParams(options)
-    val tableNameOrSubquery =
-      params.query.map(q => s"($q)").orElse(params.table.map(_.toString)).get
-    RedshiftTable("tableName", sparkSession, options,
-       jdbcWrapper, schema, fallbackFileFormat)
-  }
-
-  override def getTable(options: CaseInsensitiveStringMap, schema: StructType): Table = {
-      initParams(options, Some(schema))
-      RedshiftTable("tableName",
-          sparkSession, options, jdbcWrapper, Some(schema), fallbackFileFormat)
-  }
-  override def getPaths(map: CaseInsensitiveStringMap): Seq[String] = {
-    Seq(map.get("tempdir"))
-  }
+  val jdbcWrapper: JDBCWrapper = DefaultJDBCWrapper
 
   private def buildUnloadStmt(
-    requiredColumns: Array[String],
-    filters: Array[Filter],
-    tempDir: String,
-    creds: AWSCredentialsProvider): String = {
+     requiredColumns: Array[String],
+     filters: Array[Filter],
+     creds: AWSCredentialsProvider): Tuple2[String, String] = {
     assert(!requiredColumns.isEmpty)
+    val tempDir = params.createPerQueryTempDir()
     // TODO: Fixme Placeholder, where clause
-    val tableNameOrSubquery = params.query.map(q => s"($q)").orElse(params.table.map(_.toString)).get
+    val tableNameOrSubquery = params.getTableNameOrSubquery
     // Always quote column names:
     val columnList = requiredColumns.map(col => s""""$col"""").mkString(", ")
     val credsString: String =
@@ -99,11 +60,11 @@ class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with
     // the credentials passed via `credsString`.
     val fixedUrl = Utils.fixS3Url(Utils.removeCredentialsFromURI(new URI(tempDir)).toString)
 
-    s"UNLOAD ('$query') TO '$fixedUrl' WITH CREDENTIALS '$credsString'" +
-      s" ESCAPE MANIFEST NULL AS '${params.nullString}'"
+    (s"UNLOAD ('$query') TO '$fixedUrl' WITH CREDENTIALS '$credsString'" +
+      s" ESCAPE MANIFEST NULL AS '${params.nullString}'", tempDir)
   }
 
-  private def preBuild(tableNameOrSubquery: String): Seq[String] = {
+  def unloadDataToS3(schemaOpt: Option[StructType]): Seq[String] = {
     val conf = SparkSession.getActiveSession.get.sparkContext.hadoopConfiguration
     val creds = AWSCredentialsUtils.load(params, conf)
     val s3ClientFactory: AWSCredentialsProvider => AmazonS3Client =
@@ -117,45 +78,18 @@ class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with
         // option for this we wouldn't be able to pass in the new option. However, we choose to
         // err on the side of caution and don't throw an exception because we don't want to break
         // existing workloads in case the region detection logic is wrong.
-        log.error("The Redshift cluster and S3 bucket are in different regions " +
+        logError("The Redshift cluster and S3 bucket are in different regions " +
           s"($redshiftRegion and $s3Region, respectively). Redshift's UNLOAD command requires " +
           s"that the Redshift cluster and Amazon S3 bucket be located in the same region, so " +
           s"this read will fail.")
       }
     }
     Utils.checkThatBucketHasObjectLifecycleConfiguration(params.rootTempDir, s3ClientFactory(creds))
-    if (schema.isEmpty) {
-      // In the special case where no columns were requested, issue a `count(*)` against Redshift
-      // rather than unloading data.
-      // Fixme: add where clause
-
-      val countQuery = s"SELECT count(*) FROM $tableNameOrSubquery"
-      log.info(countQuery)
-      val conn = jdbcWrapper.getConnector(params.jdbcDriver, params.jdbcUrl, params.credentials)
-      try {
-        val results = jdbcWrapper.executeQueryInterruptibly(conn.prepareStatement(countQuery))
-        if (results.next()) {
-          val numRows = results.getLong(1)
-          val parallelism = sparkSession.conf.get("spark.sql.shuffle.partitions", "200").toInt
-          val emptyRow = RowEncoder(StructType(Seq.empty)).toRow(Row(Seq.empty))
-          sparkSession.sparkContext
-            .parallelize(1L to numRows, parallelism)
-            .map(_ => emptyRow)
-            .asInstanceOf[RDD[Row]]
-        } else {
-          throw new IllegalStateException("Could not read count from Redshift")
-        }
-        // FIXME
-        Seq.empty[String]
-      } finally {
-        conn.close()
-      }
-    } else {
+    if (schemaOpt.nonEmpty) {
       // Unload data from Redshift into a temporary directory in S3:
-      val tempDir = params.createPerQueryTempDir()
-      val schemaToUse = schema.get
-      val unloadSql = buildUnloadStmt(schemaToUse.map(_.name).toArray[String],
-        Array.empty, tempDir, creds)
+      val schema = schemaOpt.get
+      val (unloadSql, tempDir) = buildUnloadStmt(schema.map(_.name).toArray[String],
+        Array.empty, creds)
       val conn = jdbcWrapper.getConnector(params.jdbcDriver, params.jdbcUrl, params.credentials)
       try {
         jdbcWrapper.executeInterruptibly(conn.prepareStatement(unloadSql))
@@ -184,37 +118,40 @@ class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with
         }
       }
 
-      // val prunedSchema = pruneSchema(schemaToUse, schemaToUse.map(_.name).toArray)
+      // val prunedSchema = pruneSchema(schema, schema.map(_.name).toArray)
       filesToRead
-    }
+    } else {
+      {
+        // In the special case where no columns were requested, issue a `count(*)` against Redshift
+        // rather than unloading data.
+        // Fixme: add where clause
 
-  }
-
-  private def pruneSchema(schema: StructType, columns: Array[String]): StructType = {
-    val fieldMap = Map(schema.fields.map(x => x.name -> x): _*)
-    new StructType(columns.map(name => fieldMap(name)))
-  }
-
-  def getSchema(userSpecifiedSchema: Option[StructType] = None): Option[StructType] = {
-    if (schema.isEmpty) {
-      schema = Option(userSpecifiedSchema.getOrElse {
-        val tableNameOrSubquery =
-          params.query.map(q => s"($q)").orElse(params.table.map(_.toString)).get
+        val countQuery = s"SELECT count(*) FROM ${params.getTableNameOrSubquery}"
+        log.info(countQuery)
         val conn = jdbcWrapper.getConnector(params.jdbcDriver, params.jdbcUrl, params.credentials)
         try {
-          jdbcWrapper.resolveTable(conn, tableNameOrSubquery)
+          val results = jdbcWrapper.executeQueryInterruptibly(conn.prepareStatement(countQuery))
+          if (results.next()) {
+            val numRows = results.getLong(1)
+            val parallelism = spark.conf.get("spark.sql.shuffle.partitions", "200").toInt
+            val emptyRow = RowEncoder(StructType(Seq.empty)).toRow(Row(Seq.empty))
+            spark.sparkContext
+              .parallelize(1L to numRows, parallelism)
+              .map(_ => emptyRow)
+              .asInstanceOf[RDD[Row]]
+          } else {
+            throw new IllegalStateException("Could not read count from Redshift")
+          }
+          // FIXME
+          Seq.empty[String]
         } finally {
           conn.close()
         }
-      })
+      }
     }
-    schema
   }
 
-  private def initParams(options: CaseInsensitiveStringMap,
-     userSpecifiedSchema: Option[StructType] = None): Unit = {
-    params = Parameters.mergeParameters(options.asScala.toMap)
-    schema = getSchema(userSpecifiedSchema)
+  def process(schema: Option[StructType]): Seq[String] = {
+    unloadDataToS3(schema)
   }
-
 }

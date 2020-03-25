@@ -18,7 +18,6 @@
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.connector.read.PartitionReaderFactory
@@ -27,6 +26,7 @@ import org.apache.spark.sql.execution.datasources.v2.FileScan
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.util.SerializableConfiguration
 
 case class RedshiftScan(
     sparkSession: SparkSession,
@@ -52,11 +52,14 @@ case class RedshiftScan(
       dataFilters: Seq[Expression]): FileScan =
     this.copy(partitionFilters = partitionFilters, dataFilters = dataFilters)
 
-  override def createReaderFactory(): PartitionReaderFactory =
-      RedshiftPartitionReaderFactory(sparkSession.sqlContext.conf,
-        hadoopConf,
+  override def createReaderFactory(): PartitionReaderFactory = {
+    val broadcastedConf = sparkSession.sparkContext.broadcast(
+      new SerializableConfiguration(hadoopConf))
+    RedshiftPartitionReaderFactory(sparkSession.sqlContext.conf,
+        broadcastedConf,
         dataSchema,
         readDataSchema,
         readPartitionSchema,
         pushedFilters)
+  }
 }

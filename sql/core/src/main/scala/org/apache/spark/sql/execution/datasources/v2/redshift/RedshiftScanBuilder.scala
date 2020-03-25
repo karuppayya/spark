@@ -14,28 +14,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.connector.read.PartitionReader
-import org.apache.spark.sql.execution.datasources.PartitionedFile
-import org.apache.spark.sql.execution.datasources.v2.FilePartitionReaderFactory
-import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.connector.read.{Scan, SupportsPushDownFilters}
+import org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex
+import org.apache.spark.sql.execution.datasources.v2.FileScanBuilder
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-case class RedshiftPartitionReaderFactory(
-   sqlConf: SQLConf,
-   conf: Broadcast[SerializableConfiguration],
-   dataSchema: StructType,
-   readDataSchema: StructType,
-   partitionSchema: StructType,
-   filters: Seq[Filter]) extends FilePartitionReaderFactory {
-
-  override def buildReader(file: PartitionedFile): PartitionReader[InternalRow] = {
-    new RedshiftPartitionReader(file.filePath, file.start, file.length,
-      file.locations, readDataSchema, conf)
+case class RedshiftScanBuilder(
+    sparkSession: SparkSession,
+    fileIndex: PartitioningAwareFileIndex,
+    schema: StructType,
+    dataSchema: StructType,
+    options: CaseInsensitiveStringMap)
+  extends FileScanBuilder(sparkSession, fileIndex, dataSchema) {
+  override def build(): Scan = {
+    RedshiftScan(sparkSession, fileIndex,
+      dataSchema,
+      readDataSchema(),
+      readPartitionSchema(),
+      options,
+      Array.empty[Filter]
+    )
   }
 }
