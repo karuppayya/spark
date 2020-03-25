@@ -29,7 +29,6 @@ import org.apache.spark.util.SerializableConfiguration
 case class RedshiftPartitionReaderFactory(
    sqlConf: SQLConf,
    conf: Broadcast[SerializableConfiguration],
-   dataSchema: StructType,
    readDataSchema: StructType,
    partitionSchema: StructType,
    filters: Seq[Filter]) extends FilePartitionReaderFactory {

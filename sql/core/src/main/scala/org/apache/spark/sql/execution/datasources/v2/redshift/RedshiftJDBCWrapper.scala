@@ -17,13 +17,15 @@
 
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import java.sql.{ResultSet, PreparedStatement, Connection, Driver, DriverManager, ResultSetMetaData, SQLException}
+import java.sql.{Connection, Driver, DriverManager, PreparedStatement, ResultSet, ResultSetMetaData, SQLException}
 import java.util.Properties
+import java.util.concurrent.{Executors, ThreadFactory}
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.{ThreadFactory, Executors}
+
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
-import scala.concurrent.{Await, ExecutionContext, Future}
+import scala.concurrent.{ExecutionContext, Future}
 import scala.concurrent.duration.Duration
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -31,7 +33,8 @@ import scala.util.control.NonFatal
 import org.apache.spark.SPARK_VERSION
 import org.apache.spark.sql.execution.datasources.jdbc.DriverRegistry
 import org.apache.spark.sql.types._
-import org.slf4j.LoggerFactory
+import org.apache.spark.util.ThreadUtils
+
 
 /**
  * Shim which exposes some JDBC helper functions. Most of this code is copied from Spark SQL, with
@@ -126,7 +129,7 @@ private[redshift] class JDBCWrapper {
     try {
       val future = Future[T](op(statement))(ec)
       try {
-        Await.result(future, Duration.Inf)
+        ThreadUtils.awaitResult(future, Duration.Inf)
       } catch {
         case e: SQLException =>
           // Wrap and re-throw so that this thread's stacktrace appears to the user.

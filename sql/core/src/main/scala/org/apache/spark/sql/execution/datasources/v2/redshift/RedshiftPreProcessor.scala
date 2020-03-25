@@ -34,17 +34,21 @@ import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedP
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 
-class RedshiftPreProcessor(spark: SparkSession, params: MergedParameters) extends Logging {
+class RedshiftPreProcessor(spark: SparkSession,
+    schemaOpt: Option[StructType],
+    requiredSchema: StructType,
+    params: MergedParameters,
+    pushedFilters: Array[Filter]) extends Logging {
 
   val jdbcWrapper: JDBCWrapper = DefaultJDBCWrapper
 
   private def buildUnloadStmt(
-     requiredColumns: Array[String],
-     filters: Array[Filter],
-     creds: AWSCredentialsProvider): Tuple2[String, String] = {
+    requiredColumns: Array[String],
+    filters: Array[Filter],
+    creds: AWSCredentialsProvider): (String, String) = {
     assert(!requiredColumns.isEmpty)
     val tempDir = params.createPerQueryTempDir()
-    // TODO: Fixme Placeholder, where clause
+    val whereClause = FilterPushdown.buildWhereClause(schemaOpt.get, filters)
     val tableNameOrSubquery = params.getTableNameOrSubquery
     // Always quote column names:
     val columnList = requiredColumns.map(col => s""""$col"""").mkString(", ")
@@ -54,7 +58,7 @@ class RedshiftPreProcessor(spark: SparkSession, params: MergedParameters) extend
       // Since the query passed to UNLOAD will be enclosed in single quotes, we need to escape
       // any backslashes and single quotes that appear in the query itself
       val escapedTableNameOrSubqury = tableNameOrSubquery.replace("\\", "\\\\").replace("'", "\\'")
-      s"SELECT $columnList FROM $escapedTableNameOrSubqury"
+      s"SELECT $columnList FROM $escapedTableNameOrSubqury $whereClause"
     }
     // We need to remove S3 credentials from the unload path URI because they will conflict with
     // the credentials passed via `credsString`.
@@ -64,7 +68,7 @@ class RedshiftPreProcessor(spark: SparkSession, params: MergedParameters) extend
       s" ESCAPE MANIFEST NULL AS '${params.nullString}'", tempDir)
   }
 
-  def unloadDataToS3(schemaOpt: Option[StructType]): Seq[String] = {
+  def unloadDataToS3(): Seq[String] = {
     val conf = SparkSession.getActiveSession.get.sparkContext.hadoopConfiguration
     val creds = AWSCredentialsUtils.load(params, conf)
     val s3ClientFactory: AWSCredentialsProvider => AmazonS3Client =
@@ -88,7 +92,8 @@ class RedshiftPreProcessor(spark: SparkSession, params: MergedParameters) extend
     if (schemaOpt.nonEmpty) {
       // Unload data from Redshift into a temporary directory in S3:
       val schema = schemaOpt.get
-      val (unloadSql, tempDir) = buildUnloadStmt(schema.map(_.name).toArray[String],
+      val prunedSchema = pruneSchema(schema, requiredSchema.map(_.name))
+      val (unloadSql, tempDir) = buildUnloadStmt(prunedSchema,
         Array.empty, creds)
       val conn = jdbcWrapper.getConnector(params.jdbcDriver, params.jdbcUrl, params.credentials)
       try {
@@ -151,7 +156,13 @@ class RedshiftPreProcessor(spark: SparkSession, params: MergedParameters) extend
     }
   }
 
-  def process(schema: Option[StructType]): Seq[String] = {
-    unloadDataToS3(schema)
+  private def pruneSchema(schema: StructType, columns: Seq[String]): Array[String] = {
+    val fieldMap = Map(schema.fields.map(x => x.name -> x): _*)
+    // FIXME handle exceptions
+    columns.map(name => fieldMap(name).name).toArray
+  }
+
+  def process(): Seq[String] = {
+    unloadDataToS3()
   }
 }

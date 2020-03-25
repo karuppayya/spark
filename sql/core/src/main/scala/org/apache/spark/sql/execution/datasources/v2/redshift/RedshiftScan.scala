@@ -17,49 +17,46 @@
 
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import scala.collection.JavaConverters._
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.connector.read.PartitionReaderFactory
 import org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex
 import org.apache.spark.sql.execution.datasources.v2.FileScan
+import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.SerializableConfiguration
 
 case class RedshiftScan(
     sparkSession: SparkSession,
     fileIndex: PartitioningAwareFileIndex,
-    dataSchema: StructType,
     readDataSchema: StructType,
     readPartitionSchema: StructType,
-    options: CaseInsensitiveStringMap,
+    params: MergedParameters,
     pushedFilters: Array[Filter],
     partitionFilters: Seq[Expression] = Seq.empty,
     dataFilters: Seq[Expression] = Seq.empty) extends FileScan {
 
   private lazy val hadoopConf = {
-    val caseSensitiveMap = options.asCaseSensitiveMap.asScala.toMap
     // Hadoop Configurations are case sensitive.
-    sparkSession.sessionState.newHadoopConfWithOptions(caseSensitiveMap)
+    sparkSession.sessionState.newHadoopConfWithOptions(params.parameters)
   }
+
   /**
    * Create a new `FileScan` instance from the current one
    * with different `partitionFilters` and `dataFilters`
    */
   override def withFilters(partitionFilters: Seq[Expression],
-      dataFilters: Seq[Expression]): FileScan =
+    dataFilters: Seq[Expression]): FileScan =
     this.copy(partitionFilters = partitionFilters, dataFilters = dataFilters)
 
   override def createReaderFactory(): PartitionReaderFactory = {
     val broadcastedConf = sparkSession.sparkContext.broadcast(
       new SerializableConfiguration(hadoopConf))
     RedshiftPartitionReaderFactory(sparkSession.sqlContext.conf,
-        broadcastedConf,
-        dataSchema,
-        readDataSchema,
-        readPartitionSchema,
-        pushedFilters)
+      broadcastedConf,
+      readDataSchema,
+      readPartitionSchema,
+      pushedFilters)
   }
 }

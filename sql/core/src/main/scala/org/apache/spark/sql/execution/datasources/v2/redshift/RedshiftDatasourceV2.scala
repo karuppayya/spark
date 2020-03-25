@@ -17,29 +17,18 @@
 
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import java.io.InputStreamReader
-import java.net.URI
-
 import scala.collection.JavaConverters._
 
-import com.amazonaws.auth.AWSCredentialsProvider
-import com.amazonaws.services.s3.AmazonS3Client
-import com.eclipsesource.json.Json
-
 import org.apache.spark.internal.Logging
-import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.encoders.RowEncoder
 import org.apache.spark.sql.connector.catalog.Table
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.v2.FileDataSourceV2
 import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
-import org.apache.spark.sql.sources.{DataSourceRegister, Filter}
+import org.apache.spark.sql.sources.DataSourceRegister
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
-
-class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with Logging  {
+class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with Logging {
 
   /**
    * Returns a V1 [[FileFormat]] class of the same file data source.
@@ -48,7 +37,7 @@ class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with
    * source via SQL configuration and fall back to FileFormat.
    * 2. Catalog support is required, which is still under development for data source V2.
    */
-    // FIXME
+  // FIXME
   override def fallbackFileFormat: Class[_ <: FileFormat] = null
 
   private var params: MergedParameters = _
@@ -65,129 +54,17 @@ class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with
     val tableNameOrSubquery =
       params.query.map(q => s"($q)").orElse(params.table.map(_.toString)).get
     RedshiftTable("tableName", sparkSession, options,
-       jdbcWrapper, schema, fallbackFileFormat)
+      jdbcWrapper, schema, fallbackFileFormat)
   }
 
   override def getTable(options: CaseInsensitiveStringMap, schema: StructType): Table = {
-      initParams(options, Some(schema))
-      RedshiftTable("tableName",
-          sparkSession, options, jdbcWrapper, Some(schema), fallbackFileFormat)
+    initParams(options, Some(schema))
+    RedshiftTable("tableName",
+      sparkSession, options, jdbcWrapper, Some(schema), fallbackFileFormat)
   }
+
   override def getPaths(map: CaseInsensitiveStringMap): Seq[String] = {
     Seq(map.get("tempdir"))
-  }
-
-  private def buildUnloadStmt(
-    requiredColumns: Array[String],
-    filters: Array[Filter],
-    tempDir: String,
-    creds: AWSCredentialsProvider): String = {
-    assert(!requiredColumns.isEmpty)
-    // TODO: Fixme Placeholder, where clause
-    val tableNameOrSubquery = params.query.map(q => s"($q)").orElse(params.table.map(_.toString)).get
-    // Always quote column names:
-    val columnList = requiredColumns.map(col => s""""$col"""").mkString(", ")
-    val credsString: String =
-      AWSCredentialsUtils.getRedshiftCredentialsString(params, creds.getCredentials)
-    val query = {
-      // Since the query passed to UNLOAD will be enclosed in single quotes, we need to escape
-      // any backslashes and single quotes that appear in the query itself
-      val escapedTableNameOrSubqury = tableNameOrSubquery.replace("\\", "\\\\").replace("'", "\\'")
-      s"SELECT $columnList FROM $escapedTableNameOrSubqury"
-    }
-    // We need to remove S3 credentials from the unload path URI because they will conflict with
-    // the credentials passed via `credsString`.
-    val fixedUrl = Utils.fixS3Url(Utils.removeCredentialsFromURI(new URI(tempDir)).toString)
-
-    s"UNLOAD ('$query') TO '$fixedUrl' WITH CREDENTIALS '$credsString'" +
-      s" ESCAPE MANIFEST NULL AS '${params.nullString}'"
-  }
-
-  private def preBuild(tableNameOrSubquery: String): Seq[String] = {
-    val conf = SparkSession.getActiveSession.get.sparkContext.hadoopConfiguration
-    val creds = AWSCredentialsUtils.load(params, conf)
-    val s3ClientFactory: AWSCredentialsProvider => AmazonS3Client =
-      awsCredentials => new AmazonS3Client(awsCredentials)
-    for (
-      redshiftRegion <- Utils.getRegionForRedshiftCluster(params.jdbcUrl);
-      s3Region <- Utils.getRegionForS3Bucket(params.rootTempDir, s3ClientFactory(creds))
-    ) {
-      if (redshiftRegion != s3Region) {
-        // We don't currently support `extraunloadoptions`, so even if Amazon _did_ add a `region`
-        // option for this we wouldn't be able to pass in the new option. However, we choose to
-        // err on the side of caution and don't throw an exception because we don't want to break
-        // existing workloads in case the region detection logic is wrong.
-        log.error("The Redshift cluster and S3 bucket are in different regions " +
-          s"($redshiftRegion and $s3Region, respectively). Redshift's UNLOAD command requires " +
-          s"that the Redshift cluster and Amazon S3 bucket be located in the same region, so " +
-          s"this read will fail.")
-      }
-    }
-    Utils.checkThatBucketHasObjectLifecycleConfiguration(params.rootTempDir, s3ClientFactory(creds))
-    if (schema.isEmpty) {
-      // In the special case where no columns were requested, issue a `count(*)` against Redshift
-      // rather than unloading data.
-      // Fixme: add where clause
-
-      val countQuery = s"SELECT count(*) FROM $tableNameOrSubquery"
-      log.info(countQuery)
-      val conn = jdbcWrapper.getConnector(params.jdbcDriver, params.jdbcUrl, params.credentials)
-      try {
-        val results = jdbcWrapper.executeQueryInterruptibly(conn.prepareStatement(countQuery))
-        if (results.next()) {
-          val numRows = results.getLong(1)
-          val parallelism = sparkSession.conf.get("spark.sql.shuffle.partitions", "200").toInt
-          val emptyRow = RowEncoder(StructType(Seq.empty)).toRow(Row(Seq.empty))
-          sparkSession.sparkContext
-            .parallelize(1L to numRows, parallelism)
-            .map(_ => emptyRow)
-            .asInstanceOf[RDD[Row]]
-        } else {
-          throw new IllegalStateException("Could not read count from Redshift")
-        }
-        // FIXME
-        Seq.empty[String]
-      } finally {
-        conn.close()
-      }
-    } else {
-      // Unload data from Redshift into a temporary directory in S3:
-      val tempDir = params.createPerQueryTempDir()
-      val schemaToUse = schema.get
-      val unloadSql = buildUnloadStmt(schemaToUse.map(_.name).toArray[String],
-        Array.empty, tempDir, creds)
-      val conn = jdbcWrapper.getConnector(params.jdbcDriver, params.jdbcUrl, params.credentials)
-      try {
-        jdbcWrapper.executeInterruptibly(conn.prepareStatement(unloadSql))
-      } finally {
-        conn.close()
-      }
-      // Read the MANIFEST file to get the list of S3 part files that were written by Redshift.
-      // We need to use a manifest in order to guard against S3's eventually-consistent listings.
-      val filesToRead: Seq[String] = {
-        val cleanedTempDirUri =
-          Utils.fixS3Url(Utils.removeCredentialsFromURI(URI.create(tempDir)).toString)
-        val s3URI = Utils.createS3URI(cleanedTempDirUri)
-        val s3Client = s3ClientFactory(creds)
-        val is = s3Client.getObject(s3URI.getBucket, s3URI.getKey + "manifest").getObjectContent
-        val s3Files = try {
-          val entries = Json.parse(new InputStreamReader(is)).asObject().get("entries").asArray()
-          entries.iterator().asScala.map(_.asObject().get("url").asString()).toSeq
-        } finally {
-          is.close()
-        }
-        // The filenames in the manifest are of the form s3://bucket/key, without credentials.
-        // If the S3 credentials were originally specified in the tempdir's URI, then we need to
-        // reintroduce them here
-        s3Files.map { file =>
-          tempDir.stripSuffix("/") + '/' + file.stripPrefix(cleanedTempDirUri).stripPrefix("/")
-        }
-      }
-
-      // val prunedSchema = pruneSchema(schemaToUse, schemaToUse.map(_.name).toArray)
-      filesToRead
-    }
-
   }
 
   private def pruneSchema(schema: StructType, columns: Array[String]): StructType = {
@@ -212,9 +89,8 @@ class RedshiftDatasourceV2 extends FileDataSourceV2 with DataSourceRegister with
   }
 
   private def initParams(options: CaseInsensitiveStringMap,
-     userSpecifiedSchema: Option[StructType] = None): Unit = {
+    userSpecifiedSchema: Option[StructType] = None): Unit = {
     params = Parameters.mergeParameters(options.asScala.toMap)
     schema = getSchema(userSpecifiedSchema)
   }
-
 }
