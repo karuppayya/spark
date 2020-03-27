@@ -16,44 +16,37 @@
  */
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import org.apache.hadoop.fs.Path
-import org.apache.hadoop.mapreduce.{JobID, TaskAttemptID, TaskID, TaskType}
-import org.apache.hadoop.mapreduce.lib.input.FileSplit
-import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl
-
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.connector.read.PartitionReader
+import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
 
-class RedshiftPartitionReader(path: String,
-    start: Long,
-    length: Long,
-    locations: Array[String],
-    schema: StructType,
-    conf: Broadcast[SerializableConfiguration]) extends PartitionReader[InternalRow] {
+class RedshiftPartitionReader(reader: PartitionReader[InternalRow], schema: StructType,
+  params: MergedParameters)
+  extends PartitionReader[InternalRow] {
 
-  new FileSplit(new Path(path), start, length, locations)
+  val converter: Array[String] => InternalRow = {
+    Conversions.createRowConverter(schema,
+      Parameters.DEFAULT_PARAMETERS("csvnullstring"))
+  }
 
-  val attemptId = new TaskAttemptID(new TaskID(new JobID(), TaskType.MAP, 0), 0)
-  val hadoopAttemptContext = new TaskAttemptContextImpl(conf.value.value, attemptId)
-  val recordReader = new RedshiftRecordReader
-  recordReader.initialize(new FileSplit(new Path(path), start, length, locations),
-    hadoopAttemptContext)
-  val iter = new RecordReaderIterator[Array[String]](recordReader)
-  val converter = Conversions.createRowConverter(schema,
-    Parameters.DEFAULT_PARAMETERS("csvnullstring"))
+  private val isCSVFormat = params.getUnloadFormat == "csv"
 
   override def next(): Boolean = {
-    iter.hasNext
+    reader.next()
   }
 
   override def get(): InternalRow = {
-    converter(iter.next())
+    if (isCSVFormat) {
+      val row = reader.get()
+      val values = (0 until row.numFields).map(index => row.getString(index))
+      converter(values.toArray)
+    } else {
+      reader.get()
+    }
   }
 
   override def close(): Unit = {
-    iter.close()
+    reader.close()
   }
 }

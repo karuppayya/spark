@@ -39,7 +39,8 @@ private[redshift] object Parameters {
     "usestagingtable" -> "true",
     "preactions" -> ";",
     "postactions" -> ";",
-    "include_column_list" -> "false"
+    "include_column_list" -> "false",
+    "unloadformat" -> "csv"
   )
 
   val VALID_TEMP_FORMATS = Set("AVRO", "CSV", "CSV GZIP")
@@ -292,6 +293,14 @@ private[redshift] object Parameters {
      * include in the COPY command (e.g. `COPY "PUBLIC"."tablename" ("column1" [,"column2", ...])`)
      */
     def includeColumnList: Boolean = parameters("include_column_list").toBoolean
+
+
+    /**
+     * Format with which data should be unloaded by Redshift
+     * Valid values for format: csv, parquet
+     * Defaults to csv
+     */
+    def getUnloadFormat: String = parameters("unloadformat")
 
     def getTableNameOrSubquery: String = {
         query.map(q => s"($q)").orElse(table.map(_.toString)).get

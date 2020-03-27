@@ -64,8 +64,23 @@ class RedshiftPreProcessor(spark: SparkSession,
     // the credentials passed via `credsString`.
     val fixedUrl = Utils.fixS3Url(Utils.removeCredentialsFromURI(new URI(tempDir)).toString)
 
-    (s"UNLOAD ('$query') TO '$fixedUrl' WITH CREDENTIALS '$credsString'" +
-      s" ESCAPE MANIFEST NULL AS '${params.nullString}'", tempDir)
+    val sql = if (params.getUnloadFormat == "csv") {
+      s"""
+          |UNLOAD ('$query') TO '$fixedUrl'
+          |WITH CREDENTIALS '$credsString'
+          |MANIFEST
+          |ESCAPE
+          |""".stripMargin
+
+    } else {
+      s"""
+          |UNLOAD ('$query') TO '$fixedUrl'
+          |WITH CREDENTIALS '$credsString'
+          |FORMAT AS PARQUET
+          |MANIFEST
+          |""".stripMargin
+    }
+    (sql, tempDir)
   }
 
   def unloadDataToS3(): Seq[String] = {

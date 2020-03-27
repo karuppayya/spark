@@ -23,40 +23,31 @@ import org.apache.spark.sql.connector.read.PartitionReaderFactory
 import org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex
 import org.apache.spark.sql.execution.datasources.v2.FileScan
 import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
-import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
 
-case class RedshiftScan(
-    sparkSession: SparkSession,
-    fileIndex: PartitioningAwareFileIndex,
-    readDataSchema: StructType,
-    readPartitionSchema: StructType,
-    params: MergedParameters,
-    pushedFilters: Array[Filter],
-    partitionFilters: Seq[Expression] = Seq.empty,
-    dataFilters: Seq[Expression] = Seq.empty) extends FileScan {
-
-  private lazy val hadoopConf = {
-    // Hadoop Configurations are case sensitive.
-    sparkSession.sessionState.newHadoopConfWithOptions(params.parameters)
-  }
+case class RedshiftScan(scan: FileScan, schema: StructType,
+    params: MergedParameters) extends FileScan {
 
   /**
    * Create a new `FileScan` instance from the current one
    * with different `partitionFilters` and `dataFilters`
    */
   override def withFilters(partitionFilters: Seq[Expression],
-    dataFilters: Seq[Expression]): FileScan =
-    this.copy(partitionFilters = partitionFilters, dataFilters = dataFilters)
+    dataFilters: Seq[Expression]): FileScan = scan.withFilters(partitionFilters, dataFilters)
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    val broadcastedConf = sparkSession.sparkContext.broadcast(
-      new SerializableConfiguration(hadoopConf))
-    RedshiftPartitionReaderFactory(sparkSession.sqlContext.conf,
-      broadcastedConf,
-      readDataSchema,
-      readPartitionSchema,
-      pushedFilters)
+    RedshiftPartitionReaderFactory(scan.createReaderFactory(), schema, params)
   }
+
+  override def sparkSession: SparkSession = scan.sparkSession
+
+  override def fileIndex: PartitioningAwareFileIndex = scan.fileIndex
+
+  override def readDataSchema: StructType = scan.readDataSchema
+
+  override def readPartitionSchema: StructType = scan.readPartitionSchema
+
+  override def partitionFilters: Seq[Expression] = scan.partitionFilters
+
+  override def dataFilters: Seq[Expression] = scan.partitionFilters
 }

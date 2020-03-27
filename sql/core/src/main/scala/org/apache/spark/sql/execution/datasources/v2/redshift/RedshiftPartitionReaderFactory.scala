@@ -16,25 +16,19 @@
  */
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.connector.read.PartitionReader
+import org.apache.spark.sql.connector.read.{PartitionReader, PartitionReaderFactory}
 import org.apache.spark.sql.execution.datasources.PartitionedFile
 import org.apache.spark.sql.execution.datasources.v2.FilePartitionReaderFactory
-import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.sources.Filter
+import org.apache.spark.sql.execution.datasources.v2.redshift.Parameters.MergedParameters
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.util.SerializableConfiguration
 
-case class RedshiftPartitionReaderFactory(
-   sqlConf: SQLConf,
-   conf: Broadcast[SerializableConfiguration],
-   readDataSchema: StructType,
-   partitionSchema: StructType,
-   filters: Seq[Filter]) extends FilePartitionReaderFactory {
+case class RedshiftPartitionReaderFactory(readerFactory: PartitionReaderFactory,
+    schema: StructType, params: MergedParameters)
+  extends FilePartitionReaderFactory {
 
   override def buildReader(file: PartitionedFile): PartitionReader[InternalRow] = {
-    new RedshiftPartitionReader(file.filePath, file.start, file.length,
-      file.locations, readDataSchema, conf)
+    val filePartReaderFactory = readerFactory.asInstanceOf[FilePartitionReaderFactory]
+    new RedshiftPartitionReader(filePartReaderFactory.buildReader(file), schema, params)
   }
 }

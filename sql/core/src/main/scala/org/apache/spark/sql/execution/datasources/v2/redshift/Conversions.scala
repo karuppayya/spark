@@ -137,6 +137,7 @@ private[redshift] object Conversions {
     val externalRow = new GenericRow(converted)
     val encoder = RowEncoder(schema)
     (inputRow: Array[String]) => {
+
       var i = 0
       while (i < schema.length) {
         val data = inputRow(i)
