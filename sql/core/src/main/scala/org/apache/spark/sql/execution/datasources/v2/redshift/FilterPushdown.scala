@@ -24,7 +24,7 @@ import org.apache.spark.sql.types._
 /**
  * Helper methods for pushing filters into Redshift queries.
  */
-private[redshift] object FilterPushdown {
+object FilterPushdown {
   /**
    * Build a SQL WHERE clause for the given filters. If a filter cannot be pushed down then no
    * condition will be added to the WHERE clause. If none of the filters can be pushed down then
@@ -63,9 +63,9 @@ private[redshift] object FilterPushdown {
       case LessThanOrEqual(attr, value) => buildComparison(attr, value, "<=")
       case GreaterThanOrEqual(attr, value) => buildComparison(attr, value, ">=")
       case IsNotNull(attr) =>
-        getTypeForAttribute(schema, attr).map(dataType => s""""$attr" IS NOT NULL""")
+        getTypeForAttribute(schema, attr).map(_ => s""""$attr" IS NOT NULL""")
       case IsNull(attr) =>
-        getTypeForAttribute(schema, attr).map(dataType => s""""$attr" IS NULL""")
+        getTypeForAttribute(schema, attr).map(_ => s""""$attr" IS NULL""")
       case _ => None
     }
   }
@@ -75,10 +75,6 @@ private[redshift] object FilterPushdown {
    * not be resolved.
    */
   private def getTypeForAttribute(schema: StructType, attribute: String): Option[DataType] = {
-    if (schema.fieldNames.contains(attribute)) {
-      Some(schema(attribute).dataType)
-    } else {
-      None
-    }
+    schema.find(_.name == attribute).map(_.dataType)
   }
 }

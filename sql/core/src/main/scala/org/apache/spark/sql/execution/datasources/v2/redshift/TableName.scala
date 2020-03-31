@@ -21,14 +21,14 @@ import scala.collection.mutable.ArrayBuffer
 /**
  * Wrapper class for representing the name of a Redshift table.
  */
-private[redshift] case class TableName(unescapedSchemaName: String, unescapedTableName: String) {
+case class TableName(unescapedSchemaName: String, unescapedTableName: String) {
   private def quote(str: String) = '"' + str.replace("\"", "\"\"") + '"'
   def escapedSchemaName: String = quote(unescapedSchemaName)
   def escapedTableName: String = quote(unescapedTableName)
   override def toString: String = s"$escapedSchemaName.$escapedTableName"
 }
 
-private[redshift] object TableName {
+object TableName {
   /**
    * Parses a table name which is assumed to have been escaped according to Redshift's rules for
    * delimited identifiers.

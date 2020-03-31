@@ -16,13 +16,15 @@
 
 package org.apache.spark.sql.execution.datasources.v2.redshift
 
+import java.util.Locale
+
 import com.amazonaws.auth.{AWSCredentialsProvider, BasicSessionCredentials}
 
 /**
  * All user-specifiable parameters for spark-redshift, along with their validation rules and
  * defaults.
  */
-private[redshift] object Parameters {
+object Parameters {
 
   val DEFAULT_PARAMETERS: Map[String, String] = Map(
     // Notes:
@@ -45,6 +47,8 @@ private[redshift] object Parameters {
 
   val VALID_TEMP_FORMATS = Set("AVRO", "CSV", "CSV GZIP")
 
+  val VALID_UNLOAD_FORMATS = Seq("csv", "parquet")
+
   /**
    * Merge user parameters with the defaults, preferring user parameters if specified
    */
@@ -53,7 +57,7 @@ private[redshift] object Parameters {
       throw new IllegalArgumentException("'tempdir' is required for all Redshift loads and saves")
     }
     if (userParameters.contains("tempformat") &&
-        !VALID_TEMP_FORMATS.contains(userParameters("tempformat").toUpperCase)) {
+        !VALID_TEMP_FORMATS.contains(userParameters("tempformat").toUpperCase(Locale.ROOT))) {
       throw new IllegalArgumentException(
         s"""Invalid temp format: ${userParameters("tempformat")}; """ +
           s"valid formats are: ${VALID_TEMP_FORMATS.mkString(", ")}")
@@ -80,6 +84,12 @@ private[redshift] object Parameters {
     } else if (credsInURL.isEmpty) {
       throw new IllegalArgumentException(
         "You must specify credentials in either the URL or as user/password options")
+    }
+    if (userParameters.contains("unloadformat") &&
+      !VALID_UNLOAD_FORMATS.contains(userParameters("unloadformat").toLowerCase())) {
+      throw new IllegalArgumentException(
+        s"""Invalid temp format: ${userParameters("unloadformat")}; """ +
+          s"valid formats are: ${VALID_UNLOAD_FORMATS.mkString(", ")}")
     }
 
     MergedParameters(DEFAULT_PARAMETERS ++ userParameters)
@@ -113,7 +123,7 @@ private[redshift] object Parameters {
      * The format in which to save temporary files in S3. Defaults to "AVRO"; the other allowed
      * values are "CSV" and "CSV GZIP" for CSV and gzipped CSV, respectively.
      */
-    def tempFormat: String = parameters("tempformat").toUpperCase
+    def tempFormat: String = parameters("tempformat").toUpperCase(Locale.ROOT)
 
     /**
      * The String value to write for nulls when using CSV.
@@ -293,7 +303,6 @@ private[redshift] object Parameters {
      * include in the COPY command (e.g. `COPY "PUBLIC"."tablename" ("column1" [,"column2", ...])`)
      */
     def includeColumnList: Boolean = parameters("include_column_list").toBoolean
-
 
     /**
      * Format with which data should be unloaded by Redshift
