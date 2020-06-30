@@ -416,6 +416,7 @@ case class HashAggregateExec(
   private var avoidSpillInPartialAggregateTerm: String = _
   private val skipPartialAggregate = sqlContext.conf.skipPartialAggregate &&
     AggUtils.areAggExpressionsPartial(modes) && find(_.isInstanceOf[ExpandExec]).isEmpty
+  private var rowCountTerm: String = _
   private var outputFunc: String = _
 
   // whether a vectorized hashmap is used instead
@@ -695,6 +696,8 @@ case class HashAggregateExec(
       addMutableState(CodeGenerator.JAVA_BOOLEAN, "avoidPartialAggregate")
     val childrenConsumed = ctx.
       addMutableState(CodeGenerator.JAVA_BOOLEAN, "childrenConsumed")
+    rowCountTerm = ctx.
+      addMutableState(CodeGenerator.JAVA_LONG, "rowCount")
     if (sqlContext.conf.enableTwoLevelAggMap) {
       enableTwoLevelHashMap(ctx)
     } else if (sqlContext.conf.enableVectorizedHashMap) {
@@ -917,7 +920,9 @@ case class HashAggregateExec(
          |  if ($unsafeRowBuffer == null && !$avoidSpillInPartialAggregateTerm) {
          |    // If sort/spill to disk is disabled, nothing is done.
          |    // Aggregation buffer is created later
-         |    if ($skipPartialAggregate) {
+         |    boolean skipPartAgg = $rowCountTerm != 0 &&
+         |        (($fastHashMapTerm.getNumRows() + $hashMapTerm.getNumRows())/ $rowCountTerm) > 0.5;
+         |    if ($skipPartialAggregate && skipPartAgg) {
          |      $avoidSpillInPartialAggregateTerm = true;
          |    } else {
          |      if ($sorterTerm == null) {
@@ -1128,6 +1133,7 @@ case class HashAggregateExec(
         |if ($avoidSpillInPartialAggregateTerm) {
         |  $outputFunc(${unsafeRowKeyCode.value}, $unsafeRowBuffer);
         |}
+        |$rowCountTerm = $rowCountTerm + 1;
         |""".stripMargin
     }
 
