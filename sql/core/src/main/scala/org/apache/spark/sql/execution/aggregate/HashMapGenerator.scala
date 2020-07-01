@@ -140,10 +140,11 @@ abstract class HashMapGenerator(
 
   protected final def generateNumRows(): String = {
     s"""
-       |public void numRows() {
-       |  batch.numRows();
+       |public int getNumRows() {
+       |  return batch.numRows();
        |}
      """.stripMargin
+  }
 
   protected final def genComputeHash(
       ctx: CodegenContext,

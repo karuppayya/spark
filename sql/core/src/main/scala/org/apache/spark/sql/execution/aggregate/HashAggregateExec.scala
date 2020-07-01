@@ -903,7 +903,11 @@ case class HashAggregateExec(
       ("true", "true", "", "")
     }
 
+    val skipPartialAggregateThreshold = sqlContext.conf.skipPartialAggregateThreshold
+    val skipPartialAggRatio = sqlContext.conf.skipPartialAggregateRatio
+
     val oomeClassName = classOf[SparkOutOfMemoryError].getName
+    val countTerm = ctx.addMutableState(CodeGenerator.JAVA_LONG, "count")
     val findOrInsertRegularHashMap: String =
       s"""
          |if (!$avoidSpillInPartialAggregateTerm) {
@@ -920,8 +924,10 @@ case class HashAggregateExec(
          |  if ($unsafeRowBuffer == null && !$avoidSpillInPartialAggregateTerm) {
          |    // If sort/spill to disk is disabled, nothing is done.
          |    // Aggregation buffer is created later
-         |    boolean skipPartAgg = $rowCountTerm != 0 &&
-         |        (($fastHashMapTerm.getNumRows() + $hashMapTerm.getNumRows())/ $rowCountTerm) > 0.5;
+         |    $countTerm = $countTerm + $hashMapTerm.getNumRows();
+         |    boolean skipPartAgg =
+         |     !($rowCountTerm < $skipPartialAggregateThreshold)  &&
+         |      ($countTerm/$rowCountTerm) > $skipPartialAggRatio;
          |    if ($skipPartialAggregate && skipPartAgg) {
          |      $avoidSpillInPartialAggregateTerm = true;
          |    } else {
@@ -945,6 +951,7 @@ case class HashAggregateExec(
        """.stripMargin
 
     val partTerm = metricTerm(ctx, "partialAggSkipped")
+
     val findOrInsertHashMap: String = {
       val insertCode = if (isFastHashMapEnabled) {
         // If fast hash map is on, we first generate code to probe and update the fast hash map.
@@ -959,6 +966,7 @@ case class HashAggregateExec(
            |}
            |// Cannot find the key in fast hash map, try regular hash map.
            |if ($fastRowBuffer == null) {
+           |  $countTerm = $countTerm + $fastHashMapTerm.getNumRows();
            |  $findOrInsertRegularHashMap
            |}
          """.stripMargin
