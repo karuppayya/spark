@@ -39,17 +39,7 @@ object SortPrefixUtils {
   private val emptyPrefix = new UnsafeExternalRowSorter.PrefixComputer.Prefix
 
   def getPrefixComparator(sortOrder: SortOrder): PrefixComparator = {
-    sortOrder.dataType match {
-      case StringType => stringPrefixComparator(sortOrder)
-      case BinaryType => binaryPrefixComparator(sortOrder)
-      case BooleanType | ByteType | ShortType | IntegerType | LongType | DateType | TimestampType =>
-        longPrefixComparator(sortOrder)
-      case dt: DecimalType if dt.precision - dt.scale <= Decimal.MAX_LONG_DIGITS =>
-        longPrefixComparator(sortOrder)
-      case FloatType | DoubleType => doublePrefixComparator(sortOrder)
-      case dt: DecimalType => doublePrefixComparator(sortOrder)
-      case _ => NoOpPrefixComparator
-    }
+    NoOpPrefixComparator
   }
 
   private def stringPrefixComparator(sortOrder: SortOrder): PrefixComparator = {

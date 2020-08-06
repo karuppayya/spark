@@ -21,14 +21,13 @@ import java.io.ObjectInputStream
 
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.esotericsoftware.kryo.io.{Input, Output}
-
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
-
 
 /**
  * Generates bytecode for an [[Ordering]] of rows for a given set of expressions.
@@ -82,7 +81,61 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
     val oldCurrentVars = ctx.currentVars
     val rowAKeys = createOrderKeys(ctx, "a", ordering)
     val rowBKeys = createOrderKeys(ctx, "b", ordering)
-    val comparisons = rowAKeys.zip(rowBKeys).zipWithIndex.map { case ((l, r), i) =>
+    val newCode = if (SQLConf.get.getConf(SQLConf.ZORDER_ENABLED)) {
+      def comparisonCode(lExpr: Seq[ExprCode], rExpr: Seq[ExprCode]): String = {
+        val compareFunc = ctx.freshName("compareArray")
+        val lessMsbFunc = ctx.freshName("lessMsb")
+        val lessMsbCode =
+          s"""
+             |
+             |public boolean $lessMsbFunc(long x, long y) {
+             |  return x < y && x < (x ^ y);
+             |}
+             """.stripMargin
+        val compareCode =
+          s"""
+             |public int $compareFunc(long[] values1, long[] values2) {
+             |  int dim = 1;
+             |	int msd = 0;
+             |	while (dim < values1.length) {
+             |	    long l = values1[msd] ^ values2[msd];
+             |	    long l1 = values1[dim] ^ values2[dim];
+             |	    if ($lessMsbFunc(l, l1)) {
+             |	        msd = dim;
+             |	    }
+             |	    dim++;
+             |	}
+             |	if (values1[msd] == values2[msd]) {
+             |	   return 0;
+             |	} else if (values1[msd] < values2[msd] ) {
+             |	    return -1;
+             |	} else {
+             |	    return 1;
+             |	}
+             |}
+             """.stripMargin
+        val leftExprs =
+          s"""
+             |new long[]{${lExpr.map(_.value).mkString(",")}}
+             |""".stripMargin;
+        val rightExprs =
+          s"""
+             |new long[]{${rExpr.map(_.value).mkString(",")}}
+             |""".stripMargin;
+        ctx.addNewFunction(lessMsbFunc, lessMsbCode)
+        s"""
+          |${rowAKeys.map(_.code).mkString("\n")}
+          |${rowBKeys.map(_.code).mkString("\n")}
+          |
+          |int ret = ${ctx.addNewFunction(compareFunc, compareCode)}($leftExprs, $rightExprs);
+          |if (ret != 0) {
+          |  return ret;
+          |}
+          |""".stripMargin
+      }
+      comparisonCode(rowAKeys, rowBKeys)
+    } else {
+      val comparisons = rowAKeys.zip(rowBKeys).zipWithIndex.map { case ((l, r), i) =>
       val dt = ordering(i).child.dataType
       val asc = ordering(i).isAscending
       val nullOrdering = ordering(i).nullOrdering
@@ -110,33 +163,35 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
           |  }
           |}
       """.stripMargin
-    }
+      }
 
-    val code = ctx.splitExpressions(
-      expressions = comparisons,
-      funcName = "compare",
-      arguments = Seq(("InternalRow", "a"), ("InternalRow", "b")),
-      returnType = "int",
-      makeSplitFunction = { body =>
-        s"""
-          |$body
-          |return 0;
-        """.stripMargin
-      },
-      foldFunctions = { funCalls =>
-        funCalls.zipWithIndex.map { case (funCall, i) =>
-          val comp = ctx.freshName("comp")
+      val code = ctx.splitExpressions(
+        expressions = comparisons,
+        funcName = "compare",
+        arguments = Seq(("InternalRow", "a"), ("InternalRow", "b")),
+        returnType = "int",
+        makeSplitFunction = { body =>
           s"""
-            |int $comp = $funCall;
-            |if ($comp != 0) {
-            |  return $comp;
-            |}
+            |$body
+            |return 0;
           """.stripMargin
-        }.mkString
-      })
-    ctx.currentVars = oldCurrentVars
-    ctx.INPUT_ROW = oldInputRow
-    code
+        },
+        foldFunctions = { funCalls =>
+          funCalls.zipWithIndex.map { case (funCall, i) =>
+            val comp = ctx.freshName("comp")
+            s"""
+              |int $comp = $funCall;
+              |if ($comp != 0) {
+              |  return $comp;
+              |}
+            """.stripMargin
+          }.mkString
+        })
+      ctx.currentVars = oldCurrentVars
+      ctx.INPUT_ROW = oldInputRow
+      code
+    }
+    newCode
   }
 
   protected def create(ordering: Seq[SortOrder]): BaseOrdering = {

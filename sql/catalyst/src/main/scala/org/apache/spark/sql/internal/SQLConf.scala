@@ -354,6 +354,10 @@ object SQLConf {
     .bytesConf(ByteUnit.BYTE)
     .createWithDefaultString("10MB")
 
+  val ZORDER_ENABLED = buildConf("spark.sql.zorder.enabled")
+    .booleanConf
+    .createWithDefault(true)
+
   val LIMIT_SCALE_UP_FACTOR = buildConf("spark.sql.limit.scaleUpFactor")
     .internal()
     .doc("Minimal increase rate in number of partitions between attempts when executing a take " +
