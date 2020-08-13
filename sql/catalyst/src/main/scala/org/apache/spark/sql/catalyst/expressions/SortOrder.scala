@@ -44,6 +44,11 @@ case object Descending extends SortDirection {
   override def defaultNullOrdering: NullOrdering = NullsLast
 }
 
+case object Zorder extends SortDirection {
+  override def sql: String = "ASC"
+  override def defaultNullOrdering: NullOrdering = NullsFirst
+}
+
 case object NullsFirst extends NullOrdering{
   override def sql: String = "NULLS FIRST"
 }

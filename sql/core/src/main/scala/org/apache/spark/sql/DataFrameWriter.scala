@@ -48,7 +48,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
 @Stable
 final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
 
-  private val df = ds.toDF()
+  private var df = ds.toDF()
 
   /**
    * Specifies the behavior when data or table already exists. Options include:
@@ -260,6 +260,20 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
   }
 
   /**
+   * Z-orders the output with the given columns.
+   *
+   * This is applicable for all file-based data sources (e.g. Parquet, JSON) starting with Spark
+   * 2.1.0.
+   *
+   * @since 2.0
+   */
+  @scala.annotation.varargs
+  def zorderBy(column1: String, column2: String, colNames: String*): DataFrameWriter[T] = {
+    this.zorderColumnNames = Option(Seq(column1, column2) ++ colNames)
+    this
+  }
+
+  /**
    * Saves the content of the `DataFrame` at the specified path.
    *
    * @since 1.4.0
@@ -280,7 +294,9 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
         "write files of Hive data source directly.")
     }
 
+    assertNotZordered()
     assertNotBucketed("save")
+    addZorder
 
     val maybeV2Provider = lookupV2Provider()
     if (maybeV2Provider.isDefined) {
@@ -365,8 +381,8 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
             case _: TableProvider =>
               if (getTable.supports(BATCH_WRITE)) {
                 throw new AnalysisException(s"TableProvider implementation $source cannot be " +
-                    s"written with $createMode mode, please use Append or Overwrite " +
-                    "modes instead.")
+                  s"written with $createMode mode, please use Append or Overwrite " +
+                  "modes instead.")
               } else {
                 // Streaming also uses the data source V2 API. So it may be that the data source
                 // implements v2, but has no v2 implementation for batch writes. In that case, we
@@ -426,7 +442,10 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
    * @since 1.4.0
    */
   def insertInto(tableName: String): Unit = {
-    import df.sparkSession.sessionState.analyzer.{AsTableIdentifier, NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
+    // TODO Karu: Check more
+    // Error:(445, 41) stable identifier required
+    val newDf = df
+    import newDf.sparkSession.sessionState.analyzer.{AsTableIdentifier, NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
     import org.apache.spark.sql.connector.catalog.CatalogV2Util._
 
@@ -448,7 +467,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
         insertInto(catalog, ident)
 
       case SessionCatalogAndIdentifier(catalog, ident)
-          if canUseV2 && ident.namespace().length <= 1 =>
+        if canUseV2 && ident.namespace().length <= 1 =>
         insertInto(catalog, ident)
 
       case AsTableIdentifier(tableIdentifier) =>
@@ -521,6 +540,24 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
     }
   }
 
+  private def assertNotZordered(): Unit = {
+    if (zorderColumnNames.isDefined) {
+      if (source != "parquet" && source != "orc") {
+        throw new AnalysisException(s"Data can be Z-ordered only on Parquet or Orc" +
+          s"format")
+      }
+      if (bucketColumnNames.isDefined) {
+        throw new AnalysisException("Cannot Zorder on bucketed column")
+      }
+    }
+  }
+
+  private def addZorder = {
+    if (zorderColumnNames.isDefined) {
+      val zorderCol = zorderColumnNames.get
+      df = ds.zorderBy(zorderCol(0), zorderCol(1), zorderCol.drop(2): _*).toDF()
+    }
+  }
   private def assertNotPartitioned(operation: String): Unit = {
     if (partitioningColumns.isDefined) {
       throw new AnalysisException(s"'$operation' does not support partitioning")
@@ -566,7 +603,10 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
    * @since 1.4.0
    */
   def saveAsTable(tableName: String): Unit = {
-    import df.sparkSession.sessionState.analyzer.{AsTableIdentifier, NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
+    // TODO Karu: Check more
+    // Error:(445, 41) stable identifier required
+    val newDF = df
+    import newDF.sparkSession.sessionState.analyzer.{AsTableIdentifier, NonSessionCatalogAndIdentifier, SessionCatalogAndIdentifier}
     import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 
     val session = df.sparkSession
@@ -577,7 +617,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
         saveAsTable(catalog.asTableCatalog, ident, nameParts)
 
       case nameParts @ SessionCatalogAndIdentifier(catalog, ident)
-          if canUseV2 && ident.namespace().length <= 1 =>
+        if canUseV2 && ident.namespace().length <= 1 =>
         saveAsTable(catalog.asTableCatalog, ident, nameParts)
 
       case AsTableIdentifier(tableIdentifier) =>
@@ -591,7 +631,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
 
 
   private def saveAsTable(
-      catalog: TableCatalog, ident: Identifier, nameParts: Seq[String]): Unit = {
+    catalog: TableCatalog, ident: Identifier, nameParts: Seq[String]): Unit = {
     val tableOpt = try Option(catalog.loadTable(ident)) catch {
       case _: NoSuchTableException => None
     }
@@ -651,7 +691,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
 
     (tableExists, mode) match {
       case (true, SaveMode.Ignore) =>
-        // Do nothing
+      // Do nothing
 
       case (true, SaveMode.ErrorIfExists) =>
         throw new AnalysisException(s"Table $tableIdent already exists.")
@@ -671,7 +711,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
               s"Cannot overwrite table $tableName that is also being read from")
           // check hive table relation when overwrite mode
           case relation: HiveTableRelation
-              if srcRelations.contains(relation.tableMeta.identifier) =>
+            if srcRelations.contains(relation.tableMeta.identifier) =>
             throw new AnalysisException(
               s"Cannot overwrite table $tableName that is also being read from")
           case _ => // OK
@@ -727,8 +767,8 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
     if (v2Partitions.isEmpty) return
     require(v2Partitions.sameElements(existingTable.partitioning()),
       "The provided partitioning does not match of the table.\n" +
-      s" - provided: ${v2Partitions.mkString(", ")}\n" +
-      s" - table: ${existingTable.partitioning().mkString(", ")}")
+        s" - provided: ${v2Partitions.mkString(", ")}\n" +
+        s" - table: ${existingTable.partitioning().mkString(", ")}")
   }
 
   /**
@@ -969,4 +1009,6 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
   private var numBuckets: Option[Int] = None
 
   private var sortColumnNames: Option[Seq[String]] = None
+
+  private var zorderColumnNames: Option[Seq[String]] = None
 }

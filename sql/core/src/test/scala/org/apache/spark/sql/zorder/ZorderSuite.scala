@@ -38,6 +38,23 @@ class ZorderSuite extends QueryTest
     loadTestData()
   }
 
+  test("Dataframe API") {
+    import testImplicits._
+    val df = spark.table("testdata2")
+      .repartition(1)
+      .write
+      .zorderBy("a", "b")
+    df.mode("overwrite").save("file:///tmp/zorder")
+    val ress = spark.read.parquet("file:///tmp/zorder").as[TestData2].collect()
+    assert(ress.toSeq == golden)
+  }
+
+  test("SQL") {
+    val df = spark.sql("select * from testdata2 zorder by a, b")
+    val res = df.collect()
+    assert(res == golden)
+  }
+
   test("Z order - init") {
     def less_msb(x: Long, y: Long): Boolean = {
       x < y && x < (x ^ y)

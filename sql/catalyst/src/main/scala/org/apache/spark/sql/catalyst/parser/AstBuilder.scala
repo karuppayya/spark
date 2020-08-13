@@ -528,29 +528,37 @@ class AstBuilder(conf: SQLConf) extends SqlBaseBaseVisitor[AnyRef] with Logging 
 
     // Handle ORDER BY, SORT BY, DISTRIBUTE BY, and CLUSTER BY clause.
     val withOrder = if (
-      !order.isEmpty && sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
+      !order.isEmpty && zorder.isEmpty && sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
       // ORDER BY ...
       Sort(order.asScala.map(visitSortItem).toSeq, global = true, query)
-    } else if (order.isEmpty && !sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
+    } else if (order.isEmpty && !zorder.isEmpty && sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
+      // ZORDER BY ...
+      val sortExprs = expressionList(zorder).map {
+        expr =>
+          SortOrder(expr, Zorder, NullsFirst, Set.empty)
+      }
+      Sort(sortExprs, global = true, query)
+    }
+    else if (order.isEmpty && zorder.isEmpty && !sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
       // SORT BY ...
       Sort(sort.asScala.map(visitSortItem).toSeq, global = false, query)
-    } else if (order.isEmpty && sort.isEmpty && !distributeBy.isEmpty && clusterBy.isEmpty) {
+    } else if (order.isEmpty && zorder.isEmpty && sort.isEmpty && !distributeBy.isEmpty && clusterBy.isEmpty) {
       // DISTRIBUTE BY ...
       withRepartitionByExpression(ctx, expressionList(distributeBy), query)
-    } else if (order.isEmpty && !sort.isEmpty && !distributeBy.isEmpty && clusterBy.isEmpty) {
+    } else if (order.isEmpty && zorder.isEmpty && !sort.isEmpty && !distributeBy.isEmpty && clusterBy.isEmpty) {
       // SORT BY ... DISTRIBUTE BY ...
       Sort(
         sort.asScala.map(visitSortItem).toSeq,
         global = false,
         withRepartitionByExpression(ctx, expressionList(distributeBy), query))
-    } else if (order.isEmpty && sort.isEmpty && distributeBy.isEmpty && !clusterBy.isEmpty) {
+    } else if (order.isEmpty && zorder.isEmpty && sort.isEmpty && distributeBy.isEmpty && !clusterBy.isEmpty) {
       // CLUSTER BY ...
       val expressions = expressionList(clusterBy)
       Sort(
         expressions.map(SortOrder(_, Ascending)),
         global = false,
         withRepartitionByExpression(ctx, expressions, query))
-    } else if (order.isEmpty && sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
+    } else if (order.isEmpty && zorder.isEmpty && sort.isEmpty && distributeBy.isEmpty && clusterBy.isEmpty) {
       // [EMPTY]
       query
     } else {

@@ -1310,6 +1310,22 @@ class Dataset[T] private[sql](
   def orderBy(sortExprs: Column*): Dataset[T] = sort(sortExprs : _*)
 
   /**
+   * Returns a new Dataset sorted by the given expressions.
+   * This is an alias of the `sort` function.
+   *
+   * @group typedrel
+   * @since 2.0.0
+   */
+  @scala.annotation.varargs
+  def zorderBy(sortCol1: String, sortCol2: String, sortCols: String*): Dataset[T] = {
+    val sortExprs = (Seq(sortCol1, sortCol2) ++ sortCols).map(Column(_))
+    val sortOrder: Seq[SortOrder] = sortExprs.map(col => SortOrder(col.expr, Zorder))
+    withTypedPlan {
+      Sort(sortOrder, global = false, logicalPlan)
+    }
+  }
+
+  /**
    * Selects column based on the column name and returns it as a [[Column]].
    *
    * @note The column name can also reference to a nested column like `a.b`.

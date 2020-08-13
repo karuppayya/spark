@@ -443,6 +443,7 @@ dmlStatementNoWith
 
 queryOrganization
     : (ORDER BY order+=sortItem (',' order+=sortItem)*)?
+      (ZORDER BY zorder+=expression (',' zorder+=expression)*)?
       (CLUSTER BY clusterBy+=expression (',' clusterBy+=expression)*)?
       (DISTRIBUTE BY distributeBy+=expression (',' distributeBy+=expression)*)?
       (SORT BY sort+=sortItem (',' sort+=sortItem)*)?
@@ -1459,6 +1460,7 @@ nonReserved
     | WINDOW
     | WITH
     | YEAR
+    | ZORDER
     ;
 
 // NOTE: If you add a new token in the list below, you should update the list of keywords
@@ -1721,6 +1723,7 @@ WHERE: 'WHERE';
 WINDOW: 'WINDOW';
 WITH: 'WITH';
 YEAR: 'YEAR';
+ZORDER: 'ZORDER';
 //--SPARK-KEYWORD-LIST-END
 //============================
 // End of the keywords list

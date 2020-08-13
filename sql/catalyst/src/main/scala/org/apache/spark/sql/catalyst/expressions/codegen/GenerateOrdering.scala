@@ -21,11 +21,11 @@ import java.io.ObjectInputStream
 
 import com.esotericsoftware.kryo.{Kryo, KryoSerializable}
 import com.esotericsoftware.kryo.io.{Input, Output}
+
 import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.BindReferences.bindReferences
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
@@ -81,7 +81,8 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
     val oldCurrentVars = ctx.currentVars
     val rowAKeys = createOrderKeys(ctx, "a", ordering)
     val rowBKeys = createOrderKeys(ctx, "b", ordering)
-    val newCode = if (SQLConf.get.getConf(SQLConf.ZORDER_ENABLED)) {
+    val zordered = ordering.exists(_.direction == Zorder)
+    val newCode = if (zordered) {
       def comparisonCode(lExpr: Seq[ExprCode], rExpr: Seq[ExprCode]): String = {
         val compareFunc = ctx.freshName("compareArray")
         val lessMsbFunc = ctx.freshName("lessMsb")
@@ -95,8 +96,8 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
         val compareCode =
           s"""
              |public int $compareFunc(long[] values1, long[] values2) {
-             |  int dim = 1;
              |	int msd = 0;
+             |  int dim = 1;
              |	while (dim < values1.length) {
              |	    long l = values1[msd] ^ values2[msd];
              |	    long l1 = values1[dim] ^ values2[dim];

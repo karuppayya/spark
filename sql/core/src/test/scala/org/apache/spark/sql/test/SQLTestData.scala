@@ -54,13 +54,12 @@ private[sql] trait SQLTestData { self =>
   }
 
   protected lazy val testData2: DataFrame = {
-    val df = spark.sparkContext.parallelize(
-      TestData2(1, 1) ::
-      TestData2(1, 2) ::
-      TestData2(2, 1) ::
-      TestData2(2, 2) ::
-      TestData2(3, 1) ::
-      TestData2(3, 2) :: Nil, 2).toDF()
+    val data = (0 to 6).map {
+      i => (0 to 6).map {
+        j => TestData2(i, j)
+      }
+    }.flatten
+    val df = spark.sparkContext.parallelize(data, 2).toDF()
     df.createOrReplaceTempView("testData2")
     df
   }
