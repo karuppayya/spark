@@ -17,13 +17,14 @@
 
 package org.apache.spark.sql.zorder
 
+import java.io.File
 import java.time.{LocalDate, Month}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.test.SQLTestData.TestData2
+import org.apache.spark.util.Utils
 
 case class Data(intCol: Long, longCol1: Long,
                 longCol2: Long = 0, time: Long = 0L, random: Int = 0)
@@ -33,8 +34,10 @@ case class Metric(numRecords: Long, isZordered: Boolean, orderedColCount: Int,
 class ZorderSuite extends QueryTest
   with SharedSparkSession with SQLTestUtils {
 
+  var dir: File = _
   protected override def beforeAll(): Unit = {
     super.beforeAll()
+    dir = Utils.createTempDir()
     loadTestData()
   }
 
@@ -51,8 +54,8 @@ class ZorderSuite extends QueryTest
 
   test("SQL") {
     val df = spark.sql("select * from testdata2 zorder by a, b")
-    val res = df.collect()
-    assert(res == golden)
+    val res = df.collect().map(r => TestData2(r.getInt(0), r.getInt(1)) )
+    assert(res.toSeq == golden)
   }
 
   test("Z order - init") {
@@ -84,7 +87,7 @@ class ZorderSuite extends QueryTest
 
     import testImplicits._
     val results = data.toDS()
-      .repartition(1).orderBy("a", "b").collect()
+      .repartition(1).zorderBy("a", "b").collect()
     assert(sorted == golden)
     assert(results.toSeq == golden)
   }
@@ -127,7 +130,6 @@ class ZorderSuite extends QueryTest
           zorder =>
             val df = orderingCols.foreach {
               case (key, cols) =>
-                sql(s"set ${SQLConf.ZORDER_ENABLED.key}=$zorder").collect()
                 val df1 = spark.range(num).repartition(200)
                 val df2 = spark.range(num).repartition(200)
                 val df3 = spark.range(num).repartition(200)
@@ -141,13 +143,17 @@ class ZorderSuite extends QueryTest
 
                 }
                 if (zorder) {
-                  df.orderBy(cols.head, cols.drop(1): _*)
-                    .write.mode("overwrite").parquet(s"$basePath/$num/zorder/$key")
-                  // println(s"Write succesful record count = $num loc: ${s"$basePath/$num/zorder/$key"}")
+                  if (cols.size > 1) {
+                    df.zorderBy(cols(0), cols(1), cols.drop(2): _*)
+                      .write.mode("overwrite").parquet(s"$basePath/$num/zorder/$key")
+                    // println(s"Write succesful record count
+                    // = $num loc: ${s"$basePath/$num/zorder/$key"}")
+                  }
                 } else {
                   df.orderBy("random")
                     .write.mode("overwrite").parquet(s"$basePath/$num/orig/$key")
-                  // println(s"Write succesful record count = $num loc: ${s"$basePath/$num/orig/$key"}")
+                  // println(s"Write succesful record count
+                  // = $num loc: ${s"$basePath/$num/orig/$key"}")
                 }
             }
         }
@@ -233,6 +239,11 @@ class ZorderSuite extends QueryTest
       TestData2(6, 4),
       TestData2(6, 5),
       TestData2(6, 6))
+  }
+
+  protected override def afterAll(): Unit = {
+    Utils.deleteRecursively(dir)
+    super.afterAll()
   }
 }
 
