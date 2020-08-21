@@ -117,11 +117,11 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
              """.stripMargin
         val leftExprs =
           s"""
-             |new long[]{${lExpr.map(_.value).mkString(",")}}
+             |new long[]{${lExpr.map(v => s"${v.value} ^ Long.MIN_VALUE").mkString(",")}}
              |""".stripMargin;
         val rightExprs =
           s"""
-             |new long[]{${rExpr.map(_.value).mkString(",")}}
+             |new long[]{${rExpr.map(v => s"${v.value} ^ Long.MIN_VALUE").mkString(",")}}
              |""".stripMargin;
         ctx.addNewFunction(lessMsbFunc, lessMsbCode)
         s"""

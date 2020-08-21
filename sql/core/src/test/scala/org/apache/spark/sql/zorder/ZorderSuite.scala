@@ -21,9 +21,9 @@ import java.io.File
 import java.time.{LocalDate, Month}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
-import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.{AnalysisException, QueryTest}
 import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
-import org.apache.spark.sql.test.SQLTestData.TestData2
+import org.apache.spark.sql.test.SQLTestData.ZorderData
 import org.apache.spark.util.Utils
 
 case class Data(intCol: Long, longCol1: Long,
@@ -35,26 +35,93 @@ class ZorderSuite extends QueryTest
   with SharedSparkSession with SQLTestUtils {
 
   var dir: File = _
+  val tblName = "ztbl"
+
   protected override def beforeAll(): Unit = {
     super.beforeAll()
+    sql(s"DROP TABLE IF EXISTS $tblName").collect
     dir = Utils.createTempDir()
     loadTestData()
   }
 
+  test("Z-order: writes - SQL") {
+    import testImplicits._
+    sql("SET spark.sql.shuffle.partitions = 1")
+    // CTAS
+    val query =
+      s"""
+        | create table a
+        | USING PARQUET
+        | LOCATION "file:///tmp/data/zorder"
+        | AS
+        | SELECT * FROM zorderdata ZORDER BY a, b
+        |""".stripMargin
+    sql(query).collect()
+    val results = spark.read.parquet("file:///tmp/data/zorder").as[ZorderData].collect()
+    assert(results.toSeq == golden)
+
+    // Insert overwrite
+    // Create table
+    sql(s"CREATE TABLE $tblName (a INT, b INT) USING PARQUET")
+    sql(s"INSERT OVERWRITE $tblName SELECT * FROM zorderdata ZORDER BY a, b")
+    assert(spark.table(tblName).as[ZorderData].collect().toSeq == golden)
+  }
+
+  test("Z-order: writes - Dataframe api") {
+    import testImplicits._
+    sql("SET spark.sql.shuffle.partitions = 1")
+
+    val df1 = spark.table("zorderdata")
+      .write
+      .mode("overwrite")
+      .zorderBy("a", "b").save("/tmp/data")
+    val res = spark.read.parquet("file:///tmp/data").as[ZorderData].collect()
+    assert(res.toSeq == golden)
+
+    val df2 = spark.table("zorderdata")
+      .write
+      .mode("overwrite")
+      .zorderBy("a", "b").saveAsTable("zTable")
+    val res1 = spark.table("zTable").as[ZorderData].collect()
+    assert(res1.toSeq == golden)
+
+  }
+
+  test("Negative cases") {
+    val bucketException = intercept[AnalysisException] {
+      val df = spark.table("zorderdata")
+      df.write.bucketBy(1, "a").zorderBy("a", "b").save()
+    }
+    assert(bucketException.getMessage
+      .contains("Cannot Zorder, table contains bucketing properties"))
+
+    val formatException = intercept[AnalysisException] {
+      val df = spark.table("zorderdata")
+      df.write.format("csv").zorderBy("a", "b").save()
+    }
+    assert(formatException.getMessage.contains(s"Data can be Z-ordered only on Parquet or Orc" +
+      s"format"))
+
+    val repartException = intercept[AnalysisException] {
+      val df = spark.table("zorderdata")
+      df.repartition(1).write.zorderBy("a", "b").save()
+    }
+    assert(repartException.getMessage.contains("Zorder will affect the number of partitions"))
+  }
+
   test("Dataframe API") {
     import testImplicits._
-    val df = spark.table("testdata2")
-      .repartition(1)
+    val df = spark.table("zorderdata")
       .write
       .zorderBy("a", "b")
     df.mode("overwrite").save("file:///tmp/zorder")
-    val ress = spark.read.parquet("file:///tmp/zorder").as[TestData2].collect()
+    val ress = spark.read.parquet("file:///tmp/zorder").as[ZorderData].collect()
     assert(ress.toSeq == golden)
   }
 
   test("SQL") {
-    val df = spark.sql("select * from testdata2 zorder by a, b")
-    val res = df.collect().map(r => TestData2(r.getInt(0), r.getInt(1)) )
+    val df = spark.sql("select * from zorderdata zorder by a, b")
+    val res = df.collect().map(r => ZorderData(r.getInt(0), r.getInt(1)) )
     assert(res.toSeq == golden)
   }
 
@@ -66,14 +133,14 @@ class ZorderSuite extends QueryTest
     val data = (0 to 6).flatMap {
       x =>
         (0 to 6).map {
-          y => TestData2(x, y)
+          y => ZorderData(x, y)
         }
     }
 
     val sorted = data.sortWith {
       case (data1, data2) =>
-        val values1: Array[Long] = Array(data1.a, data1.b)
-        val values2: Array[Long] = Array(data2.a, data2.b)
+        val values1: Array[Long] = Array(data1.a ^ Long.MinValue, data1.b ^ Long.MinValue)
+        val values2: Array[Long] = Array(data2.a ^ Long.MinValue, data2.b ^ Long.MinValue)
         var msd = 0
         for (dim <- 1 until values1.length) {
           val l1 = values1(msd) ^ values2(msd)
@@ -190,55 +257,55 @@ class ZorderSuite extends QueryTest
   }
 
   val golden = {
-    Seq(TestData2(0, 0),
-      TestData2(0, 1),
-      TestData2(1, 0),
-      TestData2(1, 1),
-      TestData2(0, 2),
-      TestData2(0, 3),
-      TestData2(1, 2),
-      TestData2(1, 3),
-      TestData2(2, 0),
-      TestData2(2, 1),
-      TestData2(3, 0),
-      TestData2(3, 1),
-      TestData2(2, 2),
-      TestData2(2, 3),
-      TestData2(3, 2),
-      TestData2(3, 3),
-      TestData2(0, 4),
-      TestData2(0, 5),
-      TestData2(1, 4),
-      TestData2(1, 5),
-      TestData2(0, 6),
-      TestData2(1, 6),
-      TestData2(2, 4),
-      TestData2(2, 5),
-      TestData2(3, 4),
-      TestData2(3, 5),
-      TestData2(2, 6),
-      TestData2(3, 6),
-      TestData2(4, 0),
-      TestData2(4, 1),
-      TestData2(5, 0),
-      TestData2(5, 1),
-      TestData2(4, 2),
-      TestData2(4, 3),
-      TestData2(5, 2),
-      TestData2(5, 3),
-      TestData2(6, 0),
-      TestData2(6, 1),
-      TestData2(6, 2),
-      TestData2(6, 3),
-      TestData2(4, 4),
-      TestData2(4, 5),
-      TestData2(5, 4),
-      TestData2(5, 5),
-      TestData2(4, 6),
-      TestData2(5, 6),
-      TestData2(6, 4),
-      TestData2(6, 5),
-      TestData2(6, 6))
+    Seq(ZorderData(0, 0),
+      ZorderData(0, 1),
+      ZorderData(1, 0),
+      ZorderData(1, 1),
+      ZorderData(0, 2),
+      ZorderData(0, 3),
+      ZorderData(1, 2),
+      ZorderData(1, 3),
+      ZorderData(2, 0),
+      ZorderData(2, 1),
+      ZorderData(3, 0),
+      ZorderData(3, 1),
+      ZorderData(2, 2),
+      ZorderData(2, 3),
+      ZorderData(3, 2),
+      ZorderData(3, 3),
+      ZorderData(0, 4),
+      ZorderData(0, 5),
+      ZorderData(1, 4),
+      ZorderData(1, 5),
+      ZorderData(0, 6),
+      ZorderData(1, 6),
+      ZorderData(2, 4),
+      ZorderData(2, 5),
+      ZorderData(3, 4),
+      ZorderData(3, 5),
+      ZorderData(2, 6),
+      ZorderData(3, 6),
+      ZorderData(4, 0),
+      ZorderData(4, 1),
+      ZorderData(5, 0),
+      ZorderData(5, 1),
+      ZorderData(4, 2),
+      ZorderData(4, 3),
+      ZorderData(5, 2),
+      ZorderData(5, 3),
+      ZorderData(6, 0),
+      ZorderData(6, 1),
+      ZorderData(6, 2),
+      ZorderData(6, 3),
+      ZorderData(4, 4),
+      ZorderData(4, 5),
+      ZorderData(5, 4),
+      ZorderData(5, 5),
+      ZorderData(4, 6),
+      ZorderData(5, 6),
+      ZorderData(6, 4),
+      ZorderData(6, 5),
+      ZorderData(6, 6))
   }
 
   protected override def afterAll(): Unit = {

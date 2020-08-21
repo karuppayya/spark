@@ -20,13 +20,12 @@ package org.apache.spark.sql
 import java.util.{Locale, Properties}
 
 import scala.collection.JavaConverters._
-
 import org.apache.spark.annotation.Stable
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{EliminateSubqueryAliases, NoSuchTableException, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.catalog._
 import org.apache.spark.sql.catalyst.expressions.Literal
-import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CreateTableAsSelect, CreateTableAsSelectStatement, InsertIntoStatement, LogicalPlan, OverwriteByExpression, OverwritePartitionsDynamic, ReplaceTableAsSelectStatement}
+import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CreateTableAsSelect, CreateTableAsSelectStatement, InsertIntoStatement, LogicalPlan, OverwriteByExpression, OverwritePartitionsDynamic, Repartition, ReplaceTableAsSelectStatement}
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, CatalogV2Implicits, CatalogV2Util, Identifier, SupportsCatalogOptions, Table, TableCatalog, TableProvider, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
@@ -262,10 +261,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
   /**
    * Z-orders the output with the given columns.
    *
-   * This is applicable for all file-based data sources (e.g. Parquet, JSON) starting with Spark
-   * 2.1.0.
-   *
-   * @since 2.0
+   * @since 3.1.0
    */
   @scala.annotation.varargs
   def zorderBy(column1: String, column2: String, colNames: String*): DataFrameWriter[T] = {
@@ -294,7 +290,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
         "write files of Hive data source directly.")
     }
 
-    assertNotZordered()
+    assertCanBeZordered()
     assertNotBucketed("save")
     addZorder
 
@@ -540,14 +536,18 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
     }
   }
 
-  private def assertNotZordered(): Unit = {
+  private def assertCanBeZordered(): Unit = {
     if (zorderColumnNames.isDefined) {
       if (source != "parquet" && source != "orc") {
         throw new AnalysisException(s"Data can be Z-ordered only on Parquet or Orc" +
           s"format")
       }
       if (bucketColumnNames.isDefined) {
-        throw new AnalysisException("Cannot Zorder on bucketed column")
+        throw new AnalysisException("Cannot Zorder, table contains bucketing properties")
+      }
+
+      if (df.queryExecution.logical.find(_.isInstanceOf[Repartition]).isDefined) {
+        throw new AnalysisException("Zorder will affect the number of partitions")
       }
     }
   }
@@ -744,6 +744,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
       partitionColumnNames = partitioningColumns.getOrElse(Nil),
       bucketSpec = getBucketSpec)
 
+    addZorder
     runCommand(df.sparkSession, "saveAsTable")(
       CreateTable(tableDesc, mode, Some(df.logicalPlan)))
   }

@@ -54,13 +54,25 @@ private[sql] trait SQLTestData { self =>
   }
 
   protected lazy val testData2: DataFrame = {
+    val df = spark.sparkContext.parallelize(
+      TestData2(1, 1) ::
+        TestData2(1, 2) ::
+        TestData2(2, 1) ::
+        TestData2(2, 2) ::
+        TestData2(3, 1) ::
+        TestData2(3, 2) :: Nil, 2).toDF()
+    df.createOrReplaceTempView("testData2")
+    df
+  }
+
+  protected lazy val zorderData: DataFrame = {
     val data = (0 to 6).map {
       i => (0 to 6).map {
-        j => TestData2(i, j)
+        j => ZorderData(i, j)
       }
     }.flatten
     val df = spark.sparkContext.parallelize(data, 2).toDF()
-    df.createOrReplaceTempView("testData2")
+    df.createOrReplaceTempView("zorderdata")
     df
   }
 
@@ -294,6 +306,7 @@ private[sql] trait SQLTestData { self =>
     emptyTestData
     testData
     testData2
+    zorderData
     testData3
     negativeData
     largeAndSmallInts
@@ -324,6 +337,7 @@ private[sql] trait SQLTestData { self =>
 private[sql] object SQLTestData {
   case class TestData(key: Int, value: String)
   case class TestData2(a: Int, b: Int)
+  case class ZorderData(a: Int, b: Int)
   case class TestData3(a: Int, b: Option[Int])
   case class LargeAndSmallInts(a: Int, b: Int)
   case class DecimalData(a: BigDecimal, b: BigDecimal)
