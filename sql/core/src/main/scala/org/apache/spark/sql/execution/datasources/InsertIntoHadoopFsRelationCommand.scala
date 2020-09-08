@@ -20,7 +20,6 @@ package org.apache.spark.sql.execution.datasources
 import java.io.IOException
 
 import org.apache.hadoop.fs.{FileSystem, Path}
-
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTablePartition}
@@ -28,7 +27,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.execution.SparkPlan
+import org.apache.spark.sql.execution.{LogicalRDD, SortExec, SparkPlan}
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.PartitionOverwriteMode
@@ -162,6 +161,17 @@ case class InsertIntoHadoopFsRelationCommand(
           }
         }
       }
+
+      val rdd = child.execute()
+      rdd.persist()
+      val df = sparkSession.internalCreateDataFrame(rdd, child.schema)
+      val zOrderColumns: Seq[String] = Seq()
+      val aggExprs = zOrderColumns.flatMap{
+        col =>
+          Seq(col -> "max", col -> "min")
+      }.toMap
+      val results = df.agg(aggExprs).collect()
+
 
       val updatedPartitionPaths =
         FileFormatWriter.write(

@@ -18,9 +18,10 @@
 package org.apache.spark.sql.test
 
 import java.nio.charset.StandardCharsets
+import java.sql.Timestamp
 
 import org.apache.spark.rdd.RDD
-import org.apache.spark.sql.{DataFrame, SparkSession, SQLContext, SQLImplicits}
+import org.apache.spark.sql.{DataFrame, SQLContext, SQLImplicits, SparkSession}
 import org.apache.spark.unsafe.types.CalendarInterval
 
 /**
@@ -337,7 +338,7 @@ private[sql] trait SQLTestData { self =>
 private[sql] object SQLTestData {
   case class TestData(key: Int, value: String)
   case class TestData2(a: Int, b: Int)
-  case class ZorderData(a: Int, b: Int)
+  case class ZorderData(a: Int, b: Int, c: String = "")
   case class TestData3(a: Int, b: Option[Int])
   case class LargeAndSmallInts(a: Int, b: Int)
   case class DecimalData(a: BigDecimal, b: BigDecimal)

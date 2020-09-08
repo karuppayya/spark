@@ -323,14 +323,20 @@ trait CheckAnalysis extends PredicateHelper {
             }
             metrics.foreach(m => checkMetric(m, m))
 
+          case Sort(orders, _, _)  if orders.head.direction == Zorder =>
+            if (!ZorderUtils.canApplyZordering(orders.map(_.dataType))) {
+              failAnalysis(
+                s"Zordering is supported only with ${IntegerType.catalogString}," +
+                  s" ${LongType.catalogString} and ${TimestampType.catalogString} datatypes")
+
+            }
           case Sort(orders, _, _) =>
             orders.foreach { order =>
               if (!RowOrdering.isOrderable(order.dataType)) {
-                failAnalysis(
-                  s"sorting is not supported for columns of type ${order.dataType.catalogString}")
+                  failAnalysis(
+                s"sorting is not supported for columns of type ${order.dataType.catalogString}")
               }
             }
-
           case GlobalLimit(limitExpr, _) => checkLimitLikeClause("limit", limitExpr)
 
           case LocalLimit(limitExpr, _) => checkLimitLikeClause("limit", limitExpr)

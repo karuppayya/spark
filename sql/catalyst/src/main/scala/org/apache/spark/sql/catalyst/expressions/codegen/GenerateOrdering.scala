@@ -90,7 +90,7 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
           s"""
              |
              |public boolean $lessMsbFunc(long x, long y) {
-             |  return x < y && x < (x ^ y);
+             |  return java.lang.Long.compareUnsigned(x, y) < 0 && java.lang.Long.compareUnsigned(x, x ^ y) < 0;
              |}
              """.stripMargin
         val compareCode =
@@ -115,14 +115,15 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
              |	}
              |}
              """.stripMargin
-        val leftExprs =
-          s"""
-             |new long[]{${lExpr.map(v => s"${v.value} ^ Long.MIN_VALUE").mkString(",")}}
-             |""".stripMargin;
-        val rightExprs =
-          s"""
-             |new long[]{${rExpr.map(v => s"${v.value} ^ Long.MIN_VALUE").mkString(",")}}
-             |""".stripMargin;
+        def genExprs(exprCodes: Seq[ExprCode]) = {
+          val newExprs = exprCodes.zip(ordering).map {
+            case (expr, ordering) =>
+              s"${expr.value} ^ Long.MIN_VALUE"
+          }.mkString(",")
+          s"new long[]{$newExprs}"
+        }
+        val leftExprs = genExprs(lExpr)
+        val rightExprs = genExprs(rExpr)
         ctx.addNewFunction(lessMsbFunc, lessMsbCode)
         s"""
           |${rowAKeys.map(_.code).mkString("\n")}
