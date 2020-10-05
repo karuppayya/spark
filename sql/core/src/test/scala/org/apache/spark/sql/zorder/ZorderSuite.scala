@@ -19,8 +19,9 @@ package org.apache.spark.sql.zorder
 
 import java.io.File
 
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
+import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
 import org.apache.spark.sql.test.SQLTestData.ZorderData
 import org.apache.spark.util.Utils
 
@@ -181,13 +182,13 @@ class ZorderSuite extends QueryTest
     val res = spark.read.parquet("file:///tmp/data").as[ZorderData].collect()
     assert(res.toSeq == golden)
 
+    // using saveAsTable
     spark.table("zorderdata")
       .write
       .mode("overwrite")
       .zorderBy("a", "b").saveAsTable("zTable")
     val res1 = spark.table("zTable").as[ZorderData].collect()
     assert(res1.toSeq == golden)
-
   }
 
   test("Negative cases") {
@@ -222,12 +223,6 @@ class ZorderSuite extends QueryTest
     assert(ress.toSeq == golden)
   }
 
-  test("Z-order:Read - SQL") {
-    val df = spark.sql("select * from zorderdata zorder by a, b")
-    val res = df.collect().map(r => ZorderData(r.getInt(0), r.getInt(1)) )
-    assert(res.toSeq == golden)
-  }
-
   test("datatype validations") {
     intercept[AnalysisException] {
       val df = spark.sql("select * from zorderdata zorder by a, c")
@@ -236,17 +231,12 @@ class ZorderSuite extends QueryTest
 
     intercept[AnalysisException] {
       val df = spark.table("zorderdata")
-      df.zorderBy("a", "c")
+      df.zorderBy(Tuple3("a", 1.asInstanceOf[Number], 1.asInstanceOf[Number]),
+        Tuple3("c", 1.asInstanceOf[Number], 1.asInstanceOf[Number]))
     }
-
   }
 
-  test("max") {
-    val res = sql("select max(a), max(b) from testdata2").collect()
-    res
-  }
   test("Z order - init") {
-
     val d: Seq[(ZorderData, ZorderData)] = (0 to 6).flatMap {
       x =>
         (0 to 6).map {
@@ -281,13 +271,20 @@ class ZorderSuite extends QueryTest
             values1(msd) < values2(msd)
         }
 
-        import testImplicits._
-        val results = data.toDS()
-          .repartition(1).zorderBy("a", "b").collect()
-        assert(sorted == golden)
-        assert(results.toSeq == golden)
+        withSQLConf((SQLConf.SHUFFLE_PARTITIONS.key, "1")) {
+          import testImplicits._
+          data.toDS()
+            .repartition(1)
+            .write
+            .mode("overwrite")
+            .option("zorder", "a,b")
+            .save(s"file://${dir.getAbsolutePath}")
+          val results = spark.read.parquet(s"file://${dir.getAbsolutePath}")
+            .as[ZorderData].collect()
+          assert(sorted == golden)
+          assert(results.toSeq == golden)
+        }
     }
-
   }
 
   protected override def afterAll(): Unit = {

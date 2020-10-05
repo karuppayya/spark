@@ -1315,9 +1315,15 @@ class Dataset[T] private[sql](
    * @since 3.1.0
    */
   @scala.annotation.varargs
-  def zorderBy(sortCol1: String, sortCol2: String, sortCols: String*): Dataset[T] = {
-    val sortExprs = (Seq(sortCol1, sortCol2) ++ sortCols).map(Column(_))
-    val sortOrder: Seq[SortOrder] = sortExprs.map(col => SortOrder(col.expr, Zorder))
+  def zorderBy(sortCol1: Tuple3[String, Number, Number], sortCol2: Tuple3[String, Number, Number],
+      sortCols: Tuple3[String, Number, Number]*): Dataset[T] = {
+    val sortExprs = Seq(sortCol1, sortCol2) ++ sortCols
+    val sortOrder: Seq[SortOrder] = sortExprs
+      .map {
+        case (colName, min, max) =>
+          val col = Column(colName)
+          SortOrder(col.expr, Zorder(min.longValue(), max.longValue()))
+    }
     withTypedPlan {
       Sort(sortOrder, global = true, logicalPlan)
     }

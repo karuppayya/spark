@@ -266,6 +266,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
   @scala.annotation.varargs
   def zorderBy(column1: String, column2: String, colNames: String*): DataFrameWriter[T] = {
     this.zorderColumnNames = Option(Seq(column1, column2) ++ colNames)
+    this.extraOptions += ("zorder" -> (Seq(column1, column2) ++ colNames).mkString(","));
     this
   }
 
@@ -292,7 +293,7 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
 
     assertCanBeZordered()
     assertNotBucketed("save")
-    addZorder
+    // addZorder
 
     val maybeV2Provider = lookupV2Provider()
     if (maybeV2Provider.isDefined) {
@@ -552,12 +553,6 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
     }
   }
 
-  private def addZorder = {
-    if (zorderColumnNames.isDefined) {
-      val zorderCol = zorderColumnNames.get
-      df = ds.zorderBy(zorderCol(0), zorderCol(1), zorderCol.drop(2): _*).toDF()
-    }
-  }
   private def assertNotPartitioned(operation: String): Unit = {
     if (partitioningColumns.isDefined) {
       throw new AnalysisException(s"'$operation' does not support partitioning")
@@ -744,9 +739,48 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
       partitionColumnNames = partitioningColumns.getOrElse(Nil),
       bucketSpec = getBucketSpec)
 
-    addZorder
-    runCommand(df.sparkSession, "saveAsTable")(
-      CreateTable(tableDesc, mode, Some(df.logicalPlan)))
+    val newDF = extraOptions.get("zorder").map  {
+      zorderCols =>
+        val zCols = zorderCols.split(",")
+
+        val child = df.queryExecution.executedPlan
+        // Execute the RDD and persist
+        val rdd = child.execute().mapPartitionsInternal {
+          iter =>
+            // TODO: Karu, Add comment on why "_.copy"
+            iter.map(_.copy())
+        }
+        rdd.persist()
+
+        // Create a dataframe from RDD and aggregate min/max stats
+        val aggExprs = zCols.flatMap {
+          col =>
+            Seq((col -> "min"), (col -> "max"))
+
+        }
+        val minmaxRow: Array[Row] = df.agg(aggExprs.head, aggExprs.tail: _*).collect()
+        // why minmaxRow(0) => aggregation returns one row
+        val minmax = minmaxRow(0)
+
+        val zorderExprs = zCols.zipWithIndex.map {
+          case (expr, index) =>
+            Tuple3(expr, minmax.getAs[Number](index*2),
+              minmax.getAs[Number]((index * 2) + 1))
+        }
+
+        // TODO: Add a test case
+        df.zorderBy(zorderExprs(0), zorderExprs(1), zorderExprs.drop(2): _*)
+    }
+
+    // Reuse cannot happen, since we are passing the logical plan
+    if (newDF.isDefined) {
+      runCommand(newDF.get.sparkSession, "saveAsTable")(
+        CreateTable(tableDesc, mode, Some(df.logicalPlan)))
+    } else {
+      runCommand(df.sparkSession, "saveAsTable")(
+        CreateTable(tableDesc, mode, Some(df.logicalPlan)))
+
+    }
   }
 
   /** Converts the provided partitioning and bucketing information to DataSourceV2 Transforms. */

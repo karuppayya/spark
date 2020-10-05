@@ -39,7 +39,7 @@ object SortPrefixUtils {
   private val emptyPrefix = new UnsafeExternalRowSorter.PrefixComputer.Prefix
 
   def getPrefixComparator(sortOrder: SortOrder): PrefixComparator = {
-    if (sortOrder.direction == Zorder) {
+    if (sortOrder.direction.isInstanceOf[Zorder]) {
       return NoOpPrefixComparator
     }
     sortOrder.dataType match {

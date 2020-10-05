@@ -81,8 +81,21 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
     val oldCurrentVars = ctx.currentVars
     val rowAKeys = createOrderKeys(ctx, "a", ordering)
     val rowBKeys = createOrderKeys(ctx, "b", ordering)
-    val zordered = ordering.exists(_.direction == Zorder)
+    val zordered = ordering.exists(_.direction.isInstanceOf[Zorder])
+
     val newCode = if (zordered) {
+      val (maxRange, gMin) = ordering.zipWithIndex.map {
+        case(order, i) =>
+          val direction = order.direction.asInstanceOf[Zorder]
+          (direction.max - direction.min, direction.min)
+      }.maxBy(_._1)
+
+      val groupSizes = ordering.map {
+        order =>
+          val direction = order.direction.asInstanceOf[Zorder]
+          (maxRange/(direction.max - direction.min), direction.min)
+      }
+
       def comparisonCode(lExpr: Seq[ExprCode], rExpr: Seq[ExprCode]): String = {
         val compareFunc = ctx.freshName("compareArray")
         val lessMsbFunc = ctx.freshName("lessMsb")
@@ -116,9 +129,10 @@ object GenerateOrdering extends CodeGenerator[Seq[SortOrder], BaseOrdering] with
              |}
              """.stripMargin
         def genExprs(exprCodes: Seq[ExprCode]) = {
-          val newExprs = exprCodes.zip(ordering).map {
-            case (expr, ordering) =>
-              s"${expr.value} ^ Long.MIN_VALUE"
+          val newExprs = exprCodes.zip(groupSizes).map {
+            case (expr, (groupSize, min)) =>
+              s"($gMin + (${expr.value} - $min) * $groupSize)" +
+                s"^ Long.MIN_VALUE"
           }.mkString(",")
           s"new long[]{$newExprs}"
         }

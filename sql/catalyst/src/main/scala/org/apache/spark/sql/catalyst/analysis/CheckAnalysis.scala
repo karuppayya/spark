@@ -323,7 +323,7 @@ trait CheckAnalysis extends PredicateHelper {
             }
             metrics.foreach(m => checkMetric(m, m))
 
-          case Sort(orders, _, _)  if orders.head.direction == Zorder =>
+          case Sort(orders, _, _)  if orders.head.direction.isInstanceOf[Zorder] =>
             if (!ZorderUtils.canApplyZordering(orders.map(_.dataType))) {
               failAnalysis(
                 s"Zordering is supported only with ${IntegerType.catalogString}," +

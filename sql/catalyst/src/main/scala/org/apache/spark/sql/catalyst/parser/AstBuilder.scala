@@ -535,7 +535,7 @@ class AstBuilder(conf: SQLConf) extends SqlBaseBaseVisitor[AnyRef] with Logging 
       // ZORDER BY ...
       val sortExprs = expressionList(zorder).map {
         expr =>
-          SortOrder(expr, Zorder, NullsFirst, Set.empty)
+          SortOrder(expr, Zorder(), NullsFirst, Set.empty)
       }
       Sort(sortExprs, global = true, query)
     }

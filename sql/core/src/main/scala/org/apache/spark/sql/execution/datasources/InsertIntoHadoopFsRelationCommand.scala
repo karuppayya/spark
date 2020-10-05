@@ -27,7 +27,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTypes.TablePartitionSpec
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.execution.{LogicalRDD, SortExec, SparkPlan}
+import org.apache.spark.sql.execution.SparkPlan
 import org.apache.spark.sql.execution.command._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.internal.SQLConf.PartitionOverwriteMode
@@ -60,7 +60,7 @@ case class InsertIntoHadoopFsRelationCommand(
   extends DataWritingCommand {
   import org.apache.spark.sql.catalyst.catalog.ExternalCatalogUtils.escapePathName
 
-  private lazy val parameters = CaseInsensitiveMap(options)
+  private val parameters = CaseInsensitiveMap(options)
 
   private[sql] lazy val dynamicPartitionOverwrite: Boolean = {
     val partitionOverwriteMode = parameters.get("partitionOverwriteMode")
@@ -162,21 +162,44 @@ case class InsertIntoHadoopFsRelationCommand(
         }
       }
 
-      val rdd = child.execute()
-      rdd.persist()
-      val df = sparkSession.internalCreateDataFrame(rdd, child.schema)
-      val zOrderColumns: Seq[String] = Seq()
-      val aggExprs = zOrderColumns.flatMap{
-        col =>
-          Seq(col -> "max", col -> "min")
-      }.toMap
-      val results = df.agg(aggExprs).collect()
+      val newDF = options.get("zorder").map  {
+        zorderCols =>
+          val zCols = zorderCols.split(",")
+          // Execute the RDD and persist
+          val rdd = child.execute().mapPartitionsInternal {
+            iter =>
+              iter.map(_.copy())
+          }
+          rdd.persist()
+          // Create a dataframe from RDD and aggregate min/max stats
+          val df = sparkSession.internalCreateDataFrame(rdd, child.schema)
+          val aggExprs = zCols.flatMap {
+            col =>
+              Seq(col -> "min", col -> "max")
+          }
+          val minmaxRow: Array[Row] = df.agg(aggExprs.head, aggExprs.tail: _*).collect()
+          // minmaxRow(0) => aggregation returns one row
+          val minmax = minmaxRow(0)
 
+          val zorderExprs = zCols.zipWithIndex.map {
+            case (expr, index) =>
+              Tuple3(expr, minmax.getAs[Number](index*2),
+                minmax.getAs[Number]((index * 2) + 1))
+          }
 
+          // TODO: Add a test case
+          df.zorderBy(zorderExprs(0), zorderExprs(1), zorderExprs.drop(2): _*)
+      }
+
+      val newChild = if (newDF.isDefined) {
+        newDF.get.queryExecution.executedPlan
+      } else {
+        child
+      }
       val updatedPartitionPaths =
         FileFormatWriter.write(
           sparkSession = sparkSession,
-          plan = child,
+          plan = newChild,
           fileFormat = fileFormat,
           committer = committer,
           outputSpec = FileFormatWriter.OutputSpec(
