@@ -18,7 +18,9 @@
 package org.apache.spark.sql.execution;
 
 import java.io.IOException;
+import java.util.*;
 
+import com.sun.jmx.remote.internal.ArrayQueue;
 import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.internal.config.package$;
@@ -206,6 +208,8 @@ public final class UnsafeFixedWidthAggregationMap {
 
       @Override
       public void close() {
+        Integer i = 0;
+        Arrays.sort();
         // Do nothing.
       }
     };
@@ -215,6 +219,9 @@ public final class UnsafeFixedWidthAggregationMap {
    * Return the peak memory used so far, in bytes.
    */
   public long getPeakMemoryUsedBytes() {
+    Map<String , String> m = null;
+    LinkedList<Integer> a = new LinkedList();
+
     return map.getPeakMemoryUsedBytes();
   }
 

@@ -447,9 +447,11 @@ private[hive] object HadoopTableReader extends HiveInspectors with Logging {
         case oi: ShortObjectInspector =>
           (value: Any, row: InternalRow, ordinal: Int) => row.setShort(ordinal, oi.get(value))
         case oi: IntObjectInspector =>
-          (value: Any, row: InternalRow, ordinal: Int) => row.setInt(ordinal, oi.get(value))
+          (value: Any, row: InternalRow, ordinal: Int) =>
+            row.setInt(ordinal, oi.get(value))
         case oi: LongObjectInspector =>
-          (value: Any, row: InternalRow, ordinal: Int) => row.setLong(ordinal, oi.get(value))
+          (value: Any, row: InternalRow, ordinal: Int) =>
+            row.setLong(ordinal, oi.get(value))
         case oi: FloatObjectInspector =>
           (value: Any, row: InternalRow, ordinal: Int) => row.setFloat(ordinal, oi.get(value))
         case oi: DoubleObjectInspector =>

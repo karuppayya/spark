@@ -19,16 +19,15 @@ package org.apache.spark.sql.hive.execution
 
 import scala.collection.JavaConverters._
 import scala.util.Random
-
 import test.org.apache.spark.sql.MyDoubleAvg
 import test.org.apache.spark.sql.MyDoubleSum
-
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.expressions.{CodegenObjectFactoryMode, UnsafeRow}
 import org.apache.spark.sql.expressions.{MutableAggregationBuffer, UserDefinedAggregateFunction}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.hive.test.TestHiveSingleton
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.SQLTestData.ZorderData
 import org.apache.spark.sql.test.SQLTestUtils
 import org.apache.spark.sql.types._
 import org.apache.spark.tags.SlowHiveTest
@@ -1024,6 +1023,26 @@ abstract class AggregationQuerySuite extends QueryTest with SQLTestUtils with Te
     val agg2 = agg1.groupBy($"text").agg(sum($"avg_res"))
     checkAnswer(agg2, Row("a", BigDecimal("11.9999999994857142860000")))
   }
+
+  test("Hive writes") {
+    sql("set spark.sql.hive.convertMetastoreParquet=false").collect()
+    import testImplicits._
+    spark.range(10).map {
+      x => ZorderData(x.toInt, x.toInt)
+    }
+    val loc = "file:///tmp/zorder"
+    // df.write.mode("overwrite").save(loc)
+    // val newDF = spark.read.parquet(loc)
+    spark.sql(s"""
+                 |CREATE TABLE test(A BIGINT, B INT, C STRING)
+                 |STORED AS PARQUET
+                 |LOCATION '$loc'
+     """.stripMargin)
+    val df = spark.table("test")
+    val res = df.collect()
+    res
+  }
+
 
   test("SPARK-29122: hash-based aggregates for unfixed-length decimals in the interpreter mode") {
     withSQLConf(SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> "false",

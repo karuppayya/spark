@@ -19,9 +19,9 @@ package org.apache.spark.sql.zorder
 
 import java.io.File
 
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.{AnalysisException, QueryTest}
-import org.apache.spark.sql.test.{SQLTestUtils, SharedSparkSession}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.test.{SharedSparkSession, SQLTestUtils}
 import org.apache.spark.sql.test.SQLTestData.ZorderData
 import org.apache.spark.util.Utils
 
@@ -286,7 +286,40 @@ class ZorderSuite extends QueryTest
         }
     }
   }
+  test("Hive writes") {
+    sql("set spark.sql.hive.convertMetastoreParquet=false").collect()
+    import testImplicits._
+    spark.range(10).map {
+      x => ZorderData(x.toInt, x.toInt)
+    }
+    val loc = "file:///tmp/zorder"
+    // df.write.mode("overwrite").save(loc)
+    spark.sql(s"""
+    |CREATE TABLE test(A INT, B INT, C STRING)
+    |STORED AS PARQUET
+    |LOCATION '$loc'
+     """.stripMargin)
+    val df = spark.table("test")
+    df
 
+  }
+
+  test("z-order normalized") {
+    import testImplicits._
+    val r = new scala.util.Random
+    val df = spark.range(1000).map {
+      x => ZorderData(r.nextInt(1000), r.nextInt(10))
+    }
+    df.write
+      .zorderBy("a", "b")
+      .save("file:///tmp/zorderdata")
+
+    val result = df.orderBy("a", "b").as[ZorderData].collect()
+
+    val rows = spark.read.parquet("file:///tmp/zorderdata").collect()
+    System.out.println("hello")
+
+  }
   protected override def afterAll(): Unit = {
     Utils.deleteRecursively(dir)
     super.afterAll()

@@ -81,6 +81,7 @@ public final class UnsafeExternalRowSorter {
       UnsafeExternalRowSorter.PrefixComputer prefixComputer,
       long pageSizeBytes,
       boolean canUseRadixSort) throws IOException {
+      Character.digit()
     return new UnsafeExternalRowSorter(schema, recordComparatorSupplier, prefixComparator,
       prefixComputer, pageSizeBytes, canUseRadixSort);
   }

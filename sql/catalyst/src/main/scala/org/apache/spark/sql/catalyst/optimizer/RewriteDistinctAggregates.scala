@@ -128,7 +128,7 @@ import org.apache.spark.sql.types.IntegerType
  *    later on. Groups can by identified by a group id (gid) column added by the expand operator.
  * 2. De-duplicate the distinct paths and aggregate the non-aggregate path. The group by clause of
  *    this aggregate consists of the original group by clause, all the requested distinct columns
- *    and the group id. Both de-duplication of distinct column and the aggregation of the
+ *    and the group id. Both de-duplicatio  n of distinct column and the aggregation of the
  *    non-distinct group take advantage of the fact that we group by the group id (gid) and that we
  *    have nulled out all non-relevant columns the given group.
  * 3. Aggregating the distinct groups and combining this with the results of the non-distinct

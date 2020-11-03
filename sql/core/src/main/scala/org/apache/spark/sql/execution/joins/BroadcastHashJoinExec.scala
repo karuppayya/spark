@@ -98,7 +98,7 @@ case class BroadcastHashJoinExec(
 
   override def doConsume(ctx: CodegenContext, input: Seq[ExprCode], row: ExprCode): String = {
     joinType match {
-      case _: InnerLike => codegenInner(ctx, input)
+      case _: InnerLike =>  codegenInner(ctx, input)
       case LeftOuter | RightOuter => codegenOuter(ctx, input)
       case LeftSemi => codegenSemi(ctx, input)
       case LeftAnti => codegenAnti(ctx, input)

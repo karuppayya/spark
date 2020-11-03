@@ -29,7 +29,7 @@ import org.apache.spark.sql.catalyst.plans.logical.{AppendData, CreateTableAsSel
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, CatalogV2Implicits, CatalogV2Util, Identifier, SupportsCatalogOptions, Table, TableCatalog, TableProvider, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
-import org.apache.spark.sql.execution.SQLExecution
+import org.apache.spark.sql.execution.{SQLExecution, ZorderUtils}
 import org.apache.spark.sql.execution.command.DDLUtils
 import org.apache.spark.sql.execution.datasources.{CreateTable, DataSource, DataSourceUtils, LogicalRelation}
 import org.apache.spark.sql.execution.datasources.v2._
@@ -739,48 +739,16 @@ final class DataFrameWriter[T] private[sql](ds: Dataset[T]) {
       partitionColumnNames = partitioningColumns.getOrElse(Nil),
       bucketSpec = getBucketSpec)
 
-    val newDF = extraOptions.get("zorder").map  {
-      zorderCols =>
-        val zCols = zorderCols.split(",")
-
-        val child = df.queryExecution.executedPlan
-        // Execute the RDD and persist
-        val rdd = child.execute().mapPartitionsInternal {
-          iter =>
-            // TODO: Karu, Add comment on why "_.copy"
-            iter.map(_.copy())
-        }
-        rdd.persist()
-
-        // Create a dataframe from RDD and aggregate min/max stats
-        val aggExprs = zCols.flatMap {
-          col =>
-            Seq((col -> "min"), (col -> "max"))
-
-        }
-        val minmaxRow: Array[Row] = df.agg(aggExprs.head, aggExprs.tail: _*).collect()
-        // why minmaxRow(0) => aggregation returns one row
-        val minmax = minmaxRow(0)
-
-        val zorderExprs = zCols.zipWithIndex.map {
-          case (expr, index) =>
-            Tuple3(expr, minmax.getAs[Number](index*2),
-              minmax.getAs[Number]((index * 2) + 1))
-        }
-
-        // TODO: Add a test case
-        df.zorderBy(zorderExprs(0), zorderExprs(1), zorderExprs.drop(2): _*)
-    }
+    val newDF =
+      if (extraOptions.contains("zorder") && extraOptions("zorder").nonEmpty ) {
+        ZorderUtils.ZorderDF(extraOptions("zorder"), df.queryExecution.executedPlan)
+      } else {
+        df
+      }
 
     // Reuse cannot happen, since we are passing the logical plan
-    if (newDF.isDefined) {
-      runCommand(newDF.get.sparkSession, "saveAsTable")(
-        CreateTable(tableDesc, mode, Some(df.logicalPlan)))
-    } else {
-      runCommand(df.sparkSession, "saveAsTable")(
-        CreateTable(tableDesc, mode, Some(df.logicalPlan)))
-
-    }
+    runCommand(newDF.sparkSession, "saveAsTable")(
+      CreateTable(tableDesc, mode, Some(df.logicalPlan)))
   }
 
   /** Converts the provided partitioning and bucketing information to DataSourceV2 Transforms. */
