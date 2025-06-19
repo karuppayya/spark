@@ -599,26 +599,51 @@ case class AdaptiveSparkPlanExec(
           val result = createNonResultQueryStages(e.child)
           val newPlan = e.withNewChildren(Seq(result.newPlan)).asInstanceOf[Exchange]
           // Create a query stage only when all the child query stages are ready.
-          if (result.allChildStagesMaterialized) {
-            var newStage = newQueryStage(newPlan).asInstanceOf[ExchangeQueryStageExec]
-            if (conf.exchangeReuseEnabled) {
-              // Check the `stageCache` again for reuse. If a match is found, ditch the new stage
-              // and reuse the existing stage found in the `stageCache`, otherwise update the
-              // `stageCache` with the new stage.
-              val queryStage = context.stageCache.getOrElseUpdate(
-                newStage.plan.canonicalized, newStage)
-              if (queryStage.ne(newStage)) {
-                newStage = reuseQueryStage(queryStage, e)
+          if (conf.additionalShuffleStage) {
+            if (result.allChildStagesMaterialized && isRemoteExchange(e)) {
+              var newStage = newQueryStage(newPlan).asInstanceOf[ExchangeQueryStageExec]
+              if (conf.exchangeReuseEnabled) {
+                // Check the `stageCache` again for reuse. If a match is found, ditch the new stage
+                // and reuse the existing stage found in the `stageCache`, otherwise update the
+                // `stageCache` with the new stage.
+                val queryStage = context.stageCache.getOrElseUpdate(
+                  newStage.plan.canonicalized, newStage)
+                if (queryStage.ne(newStage)) {
+                  newStage = reuseQueryStage(queryStage, e)
+                }
               }
+              val isMaterialized = newStage.isMaterialized
+              CreateStageResult(
+                newPlan = newStage,
+                allChildStagesMaterialized = isMaterialized,
+                newStages = if (isMaterialized) Seq.empty else Seq(newStage))
+            } else {
+              CreateStageResult(newPlan = newPlan,
+                allChildStagesMaterialized = true, newStages = result.newStages)
             }
-            val isMaterialized = newStage.isMaterialized
-            CreateStageResult(
-              newPlan = newStage,
-              allChildStagesMaterialized = isMaterialized,
-              newStages = if (isMaterialized) Seq.empty else Seq(newStage))
+
           } else {
-            CreateStageResult(newPlan = newPlan,
-              allChildStagesMaterialized = false, newStages = result.newStages)
+            if (result.allChildStagesMaterialized) {
+              var newStage = newQueryStage(newPlan).asInstanceOf[ExchangeQueryStageExec]
+              if (conf.exchangeReuseEnabled) {
+                // Check the `stageCache` again for reuse. If a match is found, ditch the new stage
+                // and reuse the existing stage found in the `stageCache`, otherwise update the
+                // `stageCache` with the new stage.
+                val queryStage = context.stageCache.getOrElseUpdate(
+                  newStage.plan.canonicalized, newStage)
+                if (queryStage.ne(newStage)) {
+                  newStage = reuseQueryStage(queryStage, e)
+                }
+              }
+              val isMaterialized = newStage.isMaterialized
+              CreateStageResult(
+                newPlan = newStage,
+                allChildStagesMaterialized = isMaterialized,
+                newStages = if (isMaterialized) Seq.empty else Seq(newStage))
+            } else {
+              CreateStageResult(newPlan = newPlan,
+                allChildStagesMaterialized = false, newStages = result.newStages)
+            }
           }
       }
 
@@ -646,6 +671,15 @@ case class AdaptiveSparkPlanExec(
           allChildStagesMaterialized = results.forall(_.allChildStagesMaterialized),
           newStages = results.flatMap(_.newStages))
       }
+  }
+
+  def isRemoteExchange(e: Exchange): Boolean = {
+    e match {
+      case shuffleExchange: ShuffleExchangeExec =>
+        shuffleExchange.shuffleDependency.useRemoteShuffleStorage
+      case _ =>
+        false
+    }
   }
 
   private def newResultQueryStage(
