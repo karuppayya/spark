@@ -366,6 +366,7 @@ object ShuffleExchangeExec {
           ascending = true,
           samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
       case SinglePartition => new ConstantPartitioner
+      case part: PassThroughPartitioning => new PartitionIdPassthrough(part.numPartitions)
       case k @ KeyGroupedPartitioning(expressions, n, _, _) =>
         val valueMap = k.uniquePartitionValues.zipWithIndex.map {
           case (partition, index) => (partition.toSeq(expressions.map(_.dataType)), index)
@@ -397,6 +398,9 @@ object ShuffleExchangeExec {
         val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
         row => projection(row)
       case SinglePartition => identity
+      case _: PassThroughPartitioning =>
+        lazy val partitionId: Int = TaskContext.getPartitionId()
+        _ => partitionId
       case KeyGroupedPartitioning(expressions, _, _, _) =>
         row => bindReferences(expressions, outputAttributes).map(_.eval(row))
       case _ => throw SparkException.internalError(s"Exchange not implemented for $newPartitioning")
@@ -471,11 +475,13 @@ object ShuffleExchangeExec {
     // Now, we manually create a ShuffleDependency. Because pairs in rddWithPartitionIds
     // are in the form of (partitionId, row) and every partitionId is in the expected range
     // [0, part.numPartitions - 1]. The partitioner of this is a PartitionIdPassthrough.
+
     val dependency =
       new ShuffleDependency[Int, InternalRow, InternalRow](
         rddWithPartitionIds,
         new PartitionIdPassthrough(part.numPartitions),
         serializer,
+        useRemoteShuffleStorage = newPartitioning.isInstanceOf[PassThroughPartitioning],
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics))
 
     dependency
