@@ -3205,6 +3205,28 @@ object SQLConf {
       .booleanConf
       .createWithDefault(Utils.isTesting)
 
+  val ENABLE_SHUFFLE_CONSOLIDATION_TO_REMOTE =
+    buildConf("spark.sql.shuffle.consolidation.remote.enabled")
+      .doc("When enabled, creates a consolidation shuffle stage that consolidates shuffle data " +
+        "from earlier stages and uploads it to remote storage. This " +
+        "consolidation stage uses PassThroughPartitioning to satisfy distribution requirements " +
+        "without changing the actual data partitioning. The remote storage upload can improve " +
+        "shuffle performance and enable better resource utilization in distributed environments.")
+      .version("4.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val REMOTE_BYTE_BUFFER_SIZE =
+    buildConf("spark.sql.shuffle.remote.buffer.size")
+      .doc("When enabled, creates a consolidation shuffle stage that consolidates shuffle data " +
+        "from earlier stages and uploads it to remote storage. This " +
+        "consolidation stage uses PassThroughPartitioning to satisfy distribution requirements " +
+        "without changing the actual data partitioning. The remote storage upload can improve " +
+        "shuffle performance and enable better resource utilization in distributed environments.")
+      .version("4.0.0")
+      .intConf
+      .createWithDefault(64)
+
   val SORT_MERGE_JOIN_EXEC_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sortMergeJoinExec.buffer.in.memory.threshold")
       .internal()
@@ -6585,6 +6607,10 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def legacyCodingErrorAction: Boolean = getConf(SQLConf.LEGACY_CODING_ERROR_ACTION)
 
   def legacyEvalCurrentTime: Boolean = getConf(SQLConf.LEGACY_EVAL_CURRENT_TIME)
+
+  def additionalShuffleStage: Boolean = getConf(SQLConf.ENABLE_SHUFFLE_CONSOLIDATION_TO_REMOTE)
+
+  def remoteShuffleSize: Int = getConf(SQLConf.REMOTE_BYTE_BUFFER_SIZE)
 
   /** ********************** SQLConf functionality methods ************ */
 

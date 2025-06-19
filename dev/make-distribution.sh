@@ -286,9 +286,11 @@ fi
 # Copy other things
 mkdir "$DISTDIR/conf"
 cp "$SPARK_HOME"/conf/*.template "$DISTDIR/conf"
+cp "$SPARK_HOME"/conf/log4j2.properties "$DISTDIR/conf"
 cp "$SPARK_HOME/README.md" "$DISTDIR"
 cp -r "$SPARK_HOME/bin" "$DISTDIR"
 cp -r "$SPARK_HOME/python" "$DISTDIR"
+
 
 # Remove the python distribution from dist/ if we built it
 if [ "$MAKE_PIP" == "true" ]; then
