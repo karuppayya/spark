@@ -83,6 +83,7 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     val keyOrdering: Option[Ordering[K]] = None,
     val aggregator: Option[Aggregator[K, V, C]] = None,
     val mapSideCombine: Boolean = false,
+    val useRemoteShuffleStorage: Boolean = false,
     val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor)
   extends Dependency[Product2[K, V]] with Logging {
 
@@ -222,7 +223,9 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     )
   }
 
-  _rdd.sparkContext.cleaner.foreach(_.registerShuffleForCleanup(this))
+  if (!useRemoteShuffleStorage) {
+    _rdd.sparkContext.cleaner.foreach(_.registerShuffleForCleanup(this))
+  }
   _rdd.sparkContext.shuffleDriverComponents.registerShuffle(shuffleId)
 }
 
