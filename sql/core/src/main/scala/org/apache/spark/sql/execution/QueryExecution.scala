@@ -63,7 +63,7 @@ class QueryExecution(
     val logical: LogicalPlan,
     val tracker: QueryPlanningTracker = new QueryPlanningTracker,
     val mode: CommandExecutionMode.Value = CommandExecutionMode.ALL,
-    val shuffleCleanupMode: ShuffleCleanupMode = DoNotCleanup) extends Logging {
+    val shuffleCleanupMode: ShuffleCleanupMode = RemoveShuffleFiles) extends Logging {
 
   val id: Long = QueryExecution.nextExecutionId
 
@@ -546,6 +546,7 @@ object QueryExecution {
       PlanSubqueries(sparkSession),
       RemoveRedundantProjects,
       EnsureRequirements(),
+      AddConsolidationShuffle,
       // This rule must be run after `EnsureRequirements`.
       InsertSortForLimitAndOffset,
       // `ReplaceHashWithSortAgg` needs to be added after `EnsureRequirements` to guarantee the
