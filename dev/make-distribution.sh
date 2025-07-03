@@ -180,7 +180,7 @@ else
   # Store the command as an array because $MVN variable might have spaces in it.
   # Normal quoting tricks don't work.
   # See: http://mywiki.wooledge.org/BashFAQ/050
-  BUILD_COMMAND=("$MVN" clean package \
+  BUILD_COMMAND=("$MVN"   package \
       -DskipTests \
       -Dmaven.javadoc.skip=true \
       -Dmaven.scaladoc.skip=true \
@@ -288,6 +288,7 @@ fi
 # Copy other things
 mkdir "$DISTDIR/conf"
 cp "$SPARK_HOME"/conf/*.template "$DISTDIR/conf"
+cp "$SPARK_HOME"/conf/log4j2.properties "$DISTDIR/conf"
 cp "$SPARK_HOME/README.md" "$DISTDIR"
 cp -r "$SPARK_HOME/bin" "$DISTDIR"
 cp -r "$SPARK_HOME/python" "$DISTDIR"
