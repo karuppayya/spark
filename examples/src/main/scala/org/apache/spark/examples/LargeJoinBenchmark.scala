@@ -45,12 +45,18 @@ object LargeJoinBenchmark {
     // 1. Start with a distributed range of numbers. This is the most efficient
     //    way to create a large, partitioned DataFrame.
     //    The number of partitions is crucial for parallelism. We'll set it high.
-    val numPartitions = 10
+    val numPartitions = 40
     val df = spark.range(0, numRows, 1, numPartitions).repartition(numPartitions)
+    // Introduce a random column and repartition by it to truly randomize the data distribution
+    // before generating other columns. This forces a full shuffle.
+    val randomizedDf = df
+      .withColumn("random_repartition_key", rand()) // Add a random column
+      .repartition(numPartitions, col("random_repartition_key"))
+      .drop("random_repartition_key") // Drop the helper column if not needed later
 
     // 2. Generate the columns with random data.
     //    - We create a common 'join_key' for the join operation later.
-    val dfWithData = df
+    val dfWithData = randomizedDf
       .withColumn("join_key", (col("id") + idOffset).cast(LongType))
       .withColumn("random_string_1", expr("uuid()")) // Efficiently generate a random UUID string
       .withColumn("random_string_2", substring(sha2(concat(col("id").cast("string"),
@@ -86,8 +92,8 @@ object LargeJoinBenchmark {
     // Let's estimate the number of rows needed for ~100GB.
     // A row with this schema is roughly 100 bytes.
     // 100GB / 100 bytes/row = 1 billion rows.
-    val numRowsTableA: Long = 100000000L
-    val numRowsTableB: Long = 100000000L
+    val numRowsTableA: Long = 1000000000L
+    val numRowsTableB: Long = 1000000000L
 
     // Set the base path in your distributed file system (e.g., HDFS, S3, ADLS)
     val basePath = "s3a://karuppayyar-sf/spark-benchmark-data" // CHANGE THIS
@@ -95,6 +101,7 @@ object LargeJoinBenchmark {
     val tableA = "table_a"
     val tableB = "table_b"
     // --- Data Generation ---
+
     spark.time {
       createAndWriteTable(spark, tableA, numRowsTableA, basePath)
     }
