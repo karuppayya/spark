@@ -120,6 +120,7 @@ case class AdaptiveSparkPlanExec(
       CoalesceBucketsInJoin,
       RemoveRedundantProjects,
       ensureRequirements,
+      AddConsolidationShuffle,
       // This rule must be run after `EnsureRequirements`.
       InsertSortForLimitAndOffset,
       AdjustShuffleExchangePosition,
@@ -646,6 +647,15 @@ case class AdaptiveSparkPlanExec(
           allChildStagesMaterialized = results.forall(_.allChildStagesMaterialized),
           newStages = results.flatMap(_.newStages))
       }
+  }
+
+  def isRemoteExchange(e: Exchange): Boolean = {
+    e match {
+      case shuffleExchange: ShuffleExchangeExec =>
+        shuffleExchange.shuffleDependency.useRemoteShuffleStorage
+      case _ =>
+        false
+    }
   }
 
   private def newResultQueryStage(

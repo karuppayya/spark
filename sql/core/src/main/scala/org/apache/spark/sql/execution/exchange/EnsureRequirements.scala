@@ -75,10 +75,9 @@ case class EnsureRequirements(
             ShuffleExchangeExec(
               distribution.createPartitioning(numPartitions), child,
               REQUIRED_BY_STATEFUL_OPERATOR)
-
           case _ =>
-            ShuffleExchangeExec(
-              distribution.createPartitioning(numPartitions), child, shuffleOrigin)
+            val partitioning = distribution.createPartitioning(numPartitions)
+            ShuffleExchangeExec(partitioning, child, shuffleOrigin)
         }
     }
 
