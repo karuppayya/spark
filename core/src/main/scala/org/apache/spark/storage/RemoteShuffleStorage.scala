@@ -17,13 +17,13 @@
 
 package org.apache.spark.storage
 
-import java.io.File
+import java.io.{BufferedOutputStream, DataOutputStream, File}
 
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.{FileSystem, Path}
+import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.deploy.SparkHadoopUtil
@@ -34,7 +34,6 @@ import org.apache.spark.network.shuffle.BlockFetchingListener
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef, RpcTimeout}
 import org.apache.spark.shuffle.{IndexShuffleBlockResolver, ShuffleBlockInfo}
-import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
 import org.apache.spark.storage.BlockManagerMessages.RemoveShuffle
 import org.apache.spark.storage.RemoteShuffleStorage.{appId, remoteFileSystem, remoteStoragePath}
 import org.apache.spark.util.Utils
@@ -140,26 +139,48 @@ private[spark] object RemoteShuffleStorage extends Logging {
   /**
    * Read a ManagedBuffer.
    */
-  def read(conf: SparkConf, blockIds: Seq[BlockId],
-           listener: BlockFetchingListener): Unit = {
+  def read(blockIds: Seq[BlockId], listener: BlockFetchingListener): Unit = {
     blockIds.foreach(blockId => {
       logInfo(log"Read ${MDC(BLOCK_ID, blockId)}")
-      val appId = conf.getAppId
-
-      val (shuffleId, mapId, _, _) = blockId match {
-        case id: ShuffleBlockId =>
-          (id.shuffleId, id.mapId, id.reduceId, id.reduceId + 1)
-        case batchId: ShuffleBlockBatchId =>
-          (batchId.shuffleId, batchId.mapId, batchId.startReduceId, batchId.endReduceId)
-        case _ =>
-          throw SparkException.internalError(
-            s"unexpected shuffle block id format: $blockId", category = "STORAGE")
-      }
-      val name = ShuffleDataBlockId(shuffleId, mapId, NOOP_REDUCE_ID).name
-      val hash = JavaUtils.nonNegativeHash(name)
-      val dataFile = new Path(remoteStoragePath, s"$appId/$shuffleId/$hash/$name")
-      listener.onBlockFetchSuccess(blockId.name, new FileSystemManagedBuffer(dataFile, hadoopConf))
+      listener.onBlockFetchSuccess(blockId.name,
+        new FileSystemManagedBuffer(getPath(blockId), hadoopConf))
     })
   }
+
+  def getPath(blockId: BlockId): Path = {
+    val (shuffleId, _) = blockId match {
+      case ShuffleBlockId(shuffleId, mapId, _) =>
+        (shuffleId, mapId)
+      case ShuffleDataBlockId(shuffleId, mapId, _) =>
+        (shuffleId, mapId)
+      case ShuffleIndexBlockId(shuffleId, mapId, _) =>
+        (shuffleId, mapId)
+      case ShuffleChecksumBlockId(shuffleId, mapId, _) =>
+        (shuffleId, mapId)
+      case _ => (0, 0.toLong)
+    }
+      blockId match {
+        case ShuffleDataBlockId(_, _, _) =>
+        case ShuffleIndexBlockId(_, _, _) =>
+        case ShuffleChecksumBlockId(_, _, _) =>
+        case _ => throw new SparkException(s"Unsupported block id type: ${blockId.name}")
+      }
+      val hash = JavaUtils.nonNegativeHash(blockId.name)
+      new Path(remoteStoragePath, s"$appId/$shuffleId/$hash/${blockId.name}")
+  }
+
+  def getStream(blockId: BlockId): FSDataOutputStream = {
+    val path = getPath(blockId)
+    remoteFileSystem.create(path)
+  }
+
+  def writeCheckSum(blockId: BlockId, array: Array[Long]): Unit = {
+    val out = new DataOutputStream(new BufferedOutputStream(getStream(blockId),
+      scala.math.min(8192, 8 * array.length)))
+    array.foreach(out.writeLong)
+    out.flush()
+    out.close()
+  }
+
 }
 
