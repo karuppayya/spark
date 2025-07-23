@@ -40,7 +40,7 @@ class HybridShuffleExecutorComponents(sparkConf: SparkConf,
     val isRemote = ShuffleDependencyRegistry.getShuffleDependency(shuffleId)
       .exists(_.useRemoteShuffleStorage)
     if (isRemote) {
-      new S3ShuffleMapOutputWriter(sparkConf, shuffleId, mapTaskId, numPartitions)
+      new RemoteShuffleMapOutputWriter(sparkConf, shuffleId, mapTaskId, numPartitions)
     } else {
       localDiskShuffleExecutorComponents.createMapOutputWriter(shuffleId, mapTaskId, numPartitions)
     }

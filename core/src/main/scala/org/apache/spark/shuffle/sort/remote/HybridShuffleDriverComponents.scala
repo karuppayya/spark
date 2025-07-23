@@ -19,28 +19,23 @@ package org.apache.spark.shuffle.sort.remote
 
 import java.util.Collections
 
-import org.apache.spark.SparkEnv
 import org.apache.spark.shuffle.api.ShuffleDriverComponents
 import org.apache.spark.shuffle.sort.io.LocalDiskShuffleDriverComponents
-import org.apache.spark.storage.BlockManagerMaster
 
 class HybridShuffleDriverComponents(
        localDiskShuffleDriverComponents: LocalDiskShuffleDriverComponents)
   extends ShuffleDriverComponents {
 
-  private var blockManagerMaster: BlockManagerMaster = _
-
   override def initializeApplication(): java.util.Map[String, String] = {
-    blockManagerMaster = SparkEnv.get.blockManager.master
+    localDiskShuffleDriverComponents.initializeApplication()
     Collections.emptyMap()
   }
 
   override def cleanupApplication(): Unit = {
-    // TODO cleanup remote storage
+    localDiskShuffleDriverComponents.cleanupApplication()
   }
 
   override def removeShuffle(shuffleId: Int, blocking: Boolean): Unit = {
     localDiskShuffleDriverComponents.removeShuffle(shuffleId, blocking)
-    // TODO remove from remote shuffle storage
   }
 }

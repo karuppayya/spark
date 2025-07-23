@@ -17,7 +17,7 @@
 
 package org.apache.spark.storage
 
-import java.io.{BufferedOutputStream, DataOutputStream, File}
+import java.io.{BufferedOutputStream, DataOutputStream}
 
 import scala.concurrent.Future
 import scala.reflect.ClassTag
@@ -33,40 +33,8 @@ import org.apache.spark.internal.config.{STORAGE_DECOMMISSION_FALLBACK_STORAGE_C
 import org.apache.spark.network.shuffle.BlockFetchingListener
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef, RpcTimeout}
-import org.apache.spark.shuffle.{IndexShuffleBlockResolver, ShuffleBlockInfo}
 import org.apache.spark.storage.BlockManagerMessages.RemoveShuffle
 import org.apache.spark.storage.RemoteShuffleStorage.{appId, remoteFileSystem, remoteStoragePath}
-import org.apache.spark.util.Utils
-
-/**
- * A fallback storage used by storage decommissioners.
- */
-private[storage] class RemoteShuffleStorage(conf: SparkConf) extends Logging {
-  require(conf.contains("spark.app.id"))
-  require(conf.get(STORAGE_DECOMMISSION_FALLBACK_STORAGE_PATH).isDefined)
-
-  // TODO: Introduce new conf
-
-  // Visible for testing
-  def copy(shuffleBlockInfo: ShuffleBlockInfo): Unit = {
-    val shuffleId = shuffleBlockInfo.shuffleId
-    val mapId = shuffleBlockInfo.mapId
-    val startTimeNs = System.nanoTime()
-    val resolver = SparkEnv.get.shuffleManager.shuffleBlockResolver.
-      asInstanceOf[IndexShuffleBlockResolver]
-    val indexFile: File = resolver.getIndexFile(shuffleId, mapId)
-    val dataFile: File = resolver.getDataFile(shuffleId, mapId)
-    val length = dataFile.length
-    if (indexFile.exists() && dataFile.exists()) {
-      val hash = JavaUtils.nonNegativeHash(dataFile.getName)
-      remoteFileSystem.copyFromLocalFile(true,
-        new Path(Utils.resolveURI(dataFile.getAbsolutePath)),
-        new Path(remoteStoragePath, s"$appId/$shuffleId/$hash/${dataFile.getName}"))
-    }
-    logWarning(s"Write took ${(System.nanoTime() - startTimeNs) / (1000 * 1000)}ms," +
-      s" size: ${Utils.bytesToString(length)}")
-  }
-}
 
 private[storage] class RemoteStorageRpcEndpointRef(conf: SparkConf) extends RpcEndpointRef(conf) {
   // scalastyle:off executioncontextglobal
@@ -98,7 +66,6 @@ private[storage] class RemoteStorageRpcEndpointRef(conf: SparkConf) extends RpcE
 
 private[spark] object RemoteShuffleStorage extends Logging {
 
-  val shuffleBlockRemoteStorage = new RemoteShuffleStorage(SparkEnv.get.conf)
   val blockManagerId = "remoteShuffleBlockStore"
   lazy val hadoopConf: Configuration = SparkHadoopUtil.get.newConfiguration(SparkEnv.get.conf)
   val appId: String = SparkEnv.get.conf.getAppId
@@ -148,25 +115,19 @@ private[spark] object RemoteShuffleStorage extends Logging {
   }
 
   def getPath(blockId: BlockId): Path = {
-    val (shuffleId, _) = blockId match {
-      case ShuffleBlockId(shuffleId, mapId, _) =>
-        (shuffleId, mapId)
-      case ShuffleDataBlockId(shuffleId, mapId, _) =>
-        (shuffleId, mapId)
-      case ShuffleIndexBlockId(shuffleId, mapId, _) =>
-        (shuffleId, mapId)
-      case ShuffleChecksumBlockId(shuffleId, mapId, _) =>
-        (shuffleId, mapId)
-      case _ => (0, 0.toLong)
+    val (shuffleId, name) = blockId match {
+      case ShuffleBlockId(shuffleId, mapId, reduceId) =>
+        (shuffleId, ShuffleDataBlockId(shuffleId, mapId, reduceId).name)
+      case shuffleDataBlock@ ShuffleDataBlockId(shuffleId, _, _) =>
+        (shuffleId, shuffleDataBlock.name)
+      case shuffleCheckSumBlock@ ShuffleChecksumBlockId(shuffleId, _, _) =>
+        (shuffleId, shuffleCheckSumBlock.name)
+      case shuffleIndexBlock@ ShuffleIndexBlockId(shuffleId, _, _) =>
+        (shuffleId, shuffleIndexBlock.name)
+      case _ => throw new SparkException(s"Unsupported block id type: ${blockId.name}")
     }
-      blockId match {
-        case ShuffleDataBlockId(_, _, _) =>
-        case ShuffleIndexBlockId(_, _, _) =>
-        case ShuffleChecksumBlockId(_, _, _) =>
-        case _ => throw new SparkException(s"Unsupported block id type: ${blockId.name}")
-      }
-      val hash = JavaUtils.nonNegativeHash(blockId.name)
-      new Path(remoteStoragePath, s"$appId/$shuffleId/$hash/${blockId.name}")
+    val hash = JavaUtils.nonNegativeHash(name)
+    new Path(remoteStoragePath, s"$appId/$shuffleId/$hash/$name")
   }
 
   def getStream(blockId: BlockId): FSDataOutputStream = {

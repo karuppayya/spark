@@ -21,10 +21,12 @@ import java.io.{BufferedOutputStream, IOException, OutputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.{Channels, WritableByteChannel}
 import java.util.Optional
+
 import org.apache.hadoop.fs.FSDataOutputStream
-import org.apache.spark.internal.config.REMOTE_SHUFFLE_BUFFER_SIZE
+
 import org.apache.spark.{SparkConf, SparkEnv}
-import org.apache.spark.internal.{Logging, config}
+import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.internal.config.REMOTE_SHUFFLE_BUFFER_SIZE
 import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
 import org.apache.spark.shuffle.api.{ShuffleMapOutputWriter, ShufflePartitionWriter, WritableByteChannelWrapper}
 import org.apache.spark.shuffle.api.metadata.MapOutputCommitMessage
@@ -37,7 +39,7 @@ import org.apache.spark.storage.{RemoteShuffleStorage, ShuffleChecksumBlockId, S
   * This file is based on Spark "LocalDiskShuffleMapOutputWriter.java".
   */
 
-class S3ShuffleMapOutputWriter(
+class RemoteShuffleMapOutputWriter(
     conf: SparkConf,
     shuffleId: Int,
     mapId: Long,
@@ -87,7 +89,7 @@ class S3ShuffleMapOutputWriter(
       reduceIdStreamPosition = stream.getPos
     }
     lastPartitionWriterId = reducePartitionId
-    new S3ShufflePartitionWriter(reducePartitionId)
+    new RemoteShufflePartitionWriter(reducePartitionId)
   }
 
   /**
@@ -137,15 +139,15 @@ class S3ShuffleMapOutputWriter(
     }
   }
 
-  private class S3ShufflePartitionWriter(reduceId: Int) extends ShufflePartitionWriter
+  private class RemoteShufflePartitionWriter(reduceId: Int) extends ShufflePartitionWriter
     with Logging {
-    private var partitionStream: S3ShuffleOutputStream = _
-    private var partitionChannel: S3ShufflePartitionWriterChannel = _
+    private var partitionStream: RemoteShuffleOutputStream = _
+    private var partitionChannel: RemoteShufflePartitionWriterChannel = _
 
     override def openStream(): OutputStream = {
       initStream()
       if (partitionStream == null) {
-        partitionStream = new S3ShuffleOutputStream(reduceId)
+        partitionStream = new RemoteShuffleOutputStream(reduceId)
       }
       partitionStream
     }
@@ -153,7 +155,7 @@ class S3ShuffleMapOutputWriter(
     override def openChannelWrapper(): Optional[WritableByteChannelWrapper] = {
       if (partitionChannel == null) {
         initChannel()
-        partitionChannel = new S3ShufflePartitionWriterChannel(reduceId)
+        partitionChannel = new RemoteShufflePartitionWriterChannel(reduceId)
       }
       Optional.of(partitionChannel)
     }
@@ -170,7 +172,7 @@ class S3ShuffleMapOutputWriter(
     }
   }
 
-  private class S3ShuffleOutputStream(reduceId: Int) extends OutputStream {
+  private class RemoteShuffleOutputStream(reduceId: Int) extends OutputStream {
     private var byteCount: Long = 0
     private var isClosed = false
 
@@ -178,7 +180,7 @@ class S3ShuffleMapOutputWriter(
 
     override def write(b: Int): Unit = {
       if (isClosed) {
-        throw new IOException("S3ShuffleOutputStream is already closed.")
+        throw new IOException("RemoteShuffleOutputStream is already closed.")
       }
       bufferedStream.write(b)
       byteCount += 1
@@ -186,7 +188,7 @@ class S3ShuffleMapOutputWriter(
 
     override def write(b: Array[Byte], off: Int, len: Int): Unit = {
       if (isClosed) {
-        throw new IOException("S3ShuffleOutputStream is already closed.")
+        throw new IOException("RemoteShuffleOutputStream is already closed.")
       }
       bufferedStream.write(b, off, len)
       byteCount += len
@@ -194,7 +196,7 @@ class S3ShuffleMapOutputWriter(
 
     override def flush(): Unit = {
       if (isClosed) {
-        throw new IOException("S3ShuffleOutputStream is already closed.")
+        throw new IOException("RemoteShuffleOutputStream is already closed.")
       }
       bufferedStream.flush()
     }
@@ -206,8 +208,9 @@ class S3ShuffleMapOutputWriter(
     }
   }
 
-  private class S3ShufflePartitionWriterChannel(reduceId: Int) extends WritableByteChannelWrapper {
-    private val partChannel = new S3PartitionWritableByteChannel(bufferedStreamAsChannel)
+  private class RemoteShufflePartitionWriterChannel(reduceId: Int)
+    extends WritableByteChannelWrapper {
+    private val partChannel = new RemotePartitionWritableByteChannel(bufferedStreamAsChannel)
 
     override def channel(): WritableByteChannel = {
       partChannel
@@ -223,7 +226,7 @@ class S3ShuffleMapOutputWriter(
     }
   }
 
-  private class S3PartitionWritableByteChannel(channel: WritableByteChannel) extends
+  private class RemotePartitionWritableByteChannel(channel: WritableByteChannel) extends
     WritableByteChannel {
 
     private var count: Long = 0

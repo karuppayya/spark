@@ -180,9 +180,8 @@ else
   # Store the command as an array because $MVN variable might have spaces in it.
   # Normal quoting tricks don't work.
   # See: http://mywiki.wooledge.org/BashFAQ/050
-  BUILD_COMMAND=("$MVN" -T 4  package \
+  BUILD_COMMAND=("$MVN" -T 4 package \
       -DskipTests \
-      --debug \
       -Dmaven.javadoc.skip=true \
       -Dmaven.scaladoc.skip=true \
       -Dmaven.source.skip \
