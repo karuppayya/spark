@@ -25,6 +25,7 @@ import org.apache.spark._
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.rdd.RDD
+import org.apache.spark.shuffle.ShuffleDependencyRegistry
 
 /**
  * A ShuffleMapTask divides the elements of an RDD into multiple buckets (based on a partitioner
@@ -96,6 +97,10 @@ private[spark] class ShuffleMapTask(
 
     val rdd = rddAndDep._1
     val dep = rddAndDep._2
+
+    // Register the ShuffleDependency in the registry
+    ShuffleDependencyRegistry.registerShuffleDependency(dep)
+
     // While we use the old shuffle fetch protocol, we use partitionId as mapId in the
     // ShuffleBlockId construction.
     val mapId = if (SparkEnv.get.conf.get(config.SHUFFLE_USE_OLD_FETCH_PROTOCOL)) {
@@ -115,3 +120,4 @@ private[spark] class ShuffleMapTask(
 
   override def toString: String = "ShuffleMapTask(%d, %d)".format(stageId, partitionId)
 }
+

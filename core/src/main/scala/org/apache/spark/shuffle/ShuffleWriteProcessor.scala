@@ -85,15 +85,7 @@ private[spark] class ShuffleWriteProcessor extends Serializable with Logging {
             case _ =>
           }
         } else if (dep.useRemoteShuffleStorage) {
-          try {
-            RemoteShuffleStorage.shuffleBlockRemoteStorage.copy(
-              ShuffleBlockInfo(dep.shuffleId, mapId))
-            mapStatus.get.updateLocation(RemoteShuffleStorage.BLOCK_MANAGER_ID)
-          } catch {
-            case _: Throwable =>
-              logWarning(s"Shuffle upload failed, shuffle id ${dep.shuffleId}" +
-                s" will fall back to netty")
-          }
+          mapStatus.get.updateLocation(RemoteShuffleStorage.BLOCK_MANAGER_ID)
         }
       }
 

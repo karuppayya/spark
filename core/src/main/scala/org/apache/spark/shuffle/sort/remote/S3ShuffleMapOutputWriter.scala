@@ -21,11 +21,10 @@ import java.io.{BufferedOutputStream, IOException, OutputStream}
 import java.nio.ByteBuffer
 import java.nio.channels.{Channels, WritableByteChannel}
 import java.util.Optional
-
 import org.apache.hadoop.fs.FSDataOutputStream
-
+import org.apache.spark.internal.config.REMOTE_SHUFFLE_BUFFER_SIZE
 import org.apache.spark.{SparkConf, SparkEnv}
-import org.apache.spark.internal.{config, Logging}
+import org.apache.spark.internal.{Logging, config}
 import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
 import org.apache.spark.shuffle.api.{ShuffleMapOutputWriter, ShufflePartitionWriter, WritableByteChannelWrapper}
 import org.apache.spark.shuffle.api.metadata.MapOutputCommitMessage
@@ -46,8 +45,6 @@ class S3ShuffleMapOutputWriter(
 ) extends ShuffleMapOutputWriter
     with Logging {
 
-  val bufferSize: Long = conf.getSizeAsBytes("")
-
   /* Target block for writing */
   private val shuffleBlock = ShuffleDataBlockId(shuffleId, mapId, NOOP_REDUCE_ID)
   private var stream: FSDataOutputStream = _
@@ -58,6 +55,7 @@ class S3ShuffleMapOutputWriter(
   def initStream(): Unit = {
     if (stream == null) {
       stream = RemoteShuffleStorage.getStream(shuffleBlock)
+      val bufferSize: Long = conf.getSizeAsBytes(REMOTE_SHUFFLE_BUFFER_SIZE.key, "64M")
       bufferedStream = new BufferedOutputStream(stream, bufferSize.toInt)
     }
   }
@@ -103,7 +101,7 @@ class S3ShuffleMapOutputWriter(
       if (stream.getPos != totalBytesWritten) {
         throw new RuntimeException(
           f"S3ShuffleMapOutputWriter: Unexpected output length ${stream.getPos}," +
-            f" expected: ${totalBytesWritten}."
+            f" expected: $totalBytesWritten."
         )
       }
     }
@@ -234,15 +232,15 @@ class S3ShuffleMapOutputWriter(
       count
     }
 
-    override def isOpen(): Boolean = {
-      channel.isOpen()
+    override def isOpen: Boolean = {
+      channel.isOpen
     }
 
     override def close(): Unit = {}
 
     override def write(x: ByteBuffer): Int = {
       var c = 0
-      while (x.hasRemaining()) {
+      while (x.hasRemaining) {
         c += channel.write(x)
       }
       count += c
