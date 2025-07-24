@@ -32,7 +32,7 @@ import io.netty.util.internal.OutOfDirectMemoryError
 import org.apache.commons.io.IOUtils
 import org.roaringbitmap.RoaringBitmap
 
-import org.apache.spark.{MapOutputTracker, SparkEnv, SparkException, TaskContext}
+import org.apache.spark.{MapOutputTracker, SparkException, TaskContext}
 import org.apache.spark.MapOutputTracker.SHUFFLE_PUSH_MAP_ID
 import org.apache.spark.errors.SparkCoreErrors
 import org.apache.spark.internal.{Logging, MDC}
@@ -366,7 +366,7 @@ final class ShuffleBlockFetcherIterator(
 
     if (req.address == RemoteShuffleStorage.BLOCK_MANAGER_ID) {
       // TODO: fix this, donot use object here
-      RemoteShuffleStorage.read(SparkEnv.get.conf, req.blocks.map(_.blockId).toSeq,
+      RemoteShuffleStorage.read(req.blocks.map(_.blockId).toSeq,
         blockFetchingListener)
     }
     // Fetch remote shuffle blocks to disk when the request is too large. Since the shuffle data is

@@ -2884,4 +2884,11 @@ package object config {
       .checkValue(v => v.forall(Set("stdout", "stderr").contains),
         "The value only can be one or more of 'stdout, stderr'.")
       .createWithDefault(Seq("stdout", "stderr"))
+
+  private[spark] val REMOTE_SHUFFLE_BUFFER_SIZE =
+    ConfigBuilder("spark.shuffle.remote.buffer.size")
+      .version("4.1.0")
+      .stringConf
+      .createWithDefault("64M")
+
 }
