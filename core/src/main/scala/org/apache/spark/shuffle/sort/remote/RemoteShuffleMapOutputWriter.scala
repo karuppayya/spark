@@ -52,8 +52,9 @@ class RemoteShuffleMapOutputWriter(
   private var bufferedStream: OutputStream = _
   private var bufferedStreamAsChannel: WritableByteChannel = _
   private var reduceIdStreamPosition: Long = 0
+  private var reduceId: Int = _
 
-  def initStream(reduceId: Int): Unit = {
+  def initStream(): Unit = {
     if (stream == null) {
       val shuffleBlock = ShuffleDataBlockId(shuffleId, mapId, reduceId)
       stream = RemoteShuffleStorage.getStream(shuffleBlock)
@@ -62,9 +63,9 @@ class RemoteShuffleMapOutputWriter(
     }
   }
 
-  def initChannel(reduceId: Int): Unit = {
+  def initChannel(): Unit = {
     if (bufferedStreamAsChannel == null) {
-      initStream(reduceId)
+      initStream()
       bufferedStreamAsChannel = Channels.newChannel(bufferedStream)
     }
   }
@@ -74,13 +75,13 @@ class RemoteShuffleMapOutputWriter(
   private var lastPartitionWriterId: Int = -1
 
   override def getPartitionWriter(reducePartitionId: Int): ShufflePartitionWriter = {
-    if (reducePartitionId <= lastPartitionWriterId) {
-      throw new RuntimeException("Precondition: Expect a monotonically increasing" +
-        " reducePartitionId.")
+    if (stream == null) {
+      reduceId = reducePartitionId
+    } else {
+      // For the given mapper, there will be one reducer it has data for
+      assert(reducePartitionId == reduceId)
     }
-    if (reducePartitionId >= numPartitions) {
-      throw new RuntimeException("Precondition: Invalid partition id.")
-    }
+
     if (bufferedStream != null) {
       bufferedStream.flush()
     }
@@ -145,7 +146,7 @@ class RemoteShuffleMapOutputWriter(
     private var partitionChannel: RemoteShufflePartitionWriterChannel = _
 
     override def openStream(): OutputStream = {
-      initStream(reduceId)
+      initStream()
       if (partitionStream == null) {
         partitionStream = new RemoteShuffleOutputStream(reduceId)
       }
@@ -154,7 +155,7 @@ class RemoteShuffleMapOutputWriter(
 
     override def openChannelWrapper(): Optional[WritableByteChannelWrapper] = {
       if (partitionChannel == null) {
-        initChannel(reduceId)
+        initChannel()
         partitionChannel = new RemoteShufflePartitionWriterChannel(reduceId)
       }
       Optional.of(partitionChannel)

@@ -107,11 +107,11 @@ private[spark] object RemoteShuffleStorage extends Logging {
    * Read a ManagedBuffer.
    */
   def read(blockIds: Seq[BlockId], listener: BlockFetchingListener): Unit = {
-    blockIds.foreach(blockId => {
-      logInfo(log"Read ${MDC(BLOCK_ID, blockId)}")
-      listener.onBlockFetchSuccess(blockId.name,
-        new FileSystemManagedBuffer(getPath(blockId), hadoopConf))
-    })
+    assert(blockIds.size == 1)
+    val blockId = blockIds.head
+    logInfo(log"Read ${MDC(BLOCK_ID, blockId)}")
+    listener.onBlockFetchSuccess(blockId.name,
+      new FileSystemManagedBuffer(getPath(blockId), hadoopConf))
   }
 
   def getPath(blockId: BlockId): Path = {
