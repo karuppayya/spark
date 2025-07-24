@@ -33,7 +33,6 @@ import org.apache.spark.internal.config.{STORAGE_DECOMMISSION_FALLBACK_STORAGE_C
 import org.apache.spark.network.shuffle.BlockFetchingListener
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef, RpcTimeout}
-import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
 import org.apache.spark.storage.BlockManagerMessages.RemoveShuffle
 import org.apache.spark.storage.RemoteShuffleStorage.{appId, remoteFileSystem, remoteStoragePath}
 
@@ -117,12 +116,12 @@ private[spark] object RemoteShuffleStorage extends Logging {
 
   def getPath(blockId: BlockId): Path = {
     val (shuffleId, name) = blockId match {
-      case ShuffleBlockId(shuffleId, mapId, _) =>
-        (shuffleId, ShuffleDataBlockId(shuffleId, mapId, NOOP_REDUCE_ID).name)
+      case ShuffleBlockId(shuffleId, mapId, reduceId) =>
+        (shuffleId, ShuffleDataBlockId(shuffleId, mapId, reduceId).name)
       case shuffleDataBlock@ ShuffleDataBlockId(shuffleId, _, _) =>
-        (shuffleId, shuffleDataBlock.copy(reduceId = NOOP_REDUCE_ID).name)
+        (shuffleId, shuffleDataBlock.name)
       case shuffleCheckSumBlock@ ShuffleChecksumBlockId(shuffleId, _, _) =>
-        (shuffleId, shuffleCheckSumBlock.copy(reduceId = NOOP_REDUCE_ID))
+        (shuffleId, shuffleCheckSumBlock.name)
       case shuffleIndexBlock@ ShuffleIndexBlockId(shuffleId, _, _) =>
         (shuffleId, shuffleIndexBlock.name)
       case _ => throw new SparkException(s"Unsupported block id type: ${blockId.name}")
@@ -143,6 +142,5 @@ private[spark] object RemoteShuffleStorage extends Logging {
     out.flush()
     out.close()
   }
-
 }
 

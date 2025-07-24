@@ -27,7 +27,6 @@ import org.apache.hadoop.fs.FSDataOutputStream
 import org.apache.spark.{SparkConf, SparkEnv}
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.internal.config.REMOTE_SHUFFLE_BUFFER_SIZE
-import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
 import org.apache.spark.shuffle.api.{ShuffleMapOutputWriter, ShufflePartitionWriter, WritableByteChannelWrapper}
 import org.apache.spark.shuffle.api.metadata.MapOutputCommitMessage
 import org.apache.spark.storage.{RemoteShuffleStorage, ShuffleChecksumBlockId, ShuffleDataBlockId}
@@ -48,23 +47,24 @@ class RemoteShuffleMapOutputWriter(
     with Logging {
 
   /* Target block for writing */
-  private val shuffleBlock = ShuffleDataBlockId(shuffleId, mapId, NOOP_REDUCE_ID)
+
   private var stream: FSDataOutputStream = _
   private var bufferedStream: OutputStream = _
   private var bufferedStreamAsChannel: WritableByteChannel = _
   private var reduceIdStreamPosition: Long = 0
 
-  def initStream(): Unit = {
+  def initStream(reduceId: Int): Unit = {
     if (stream == null) {
+      val shuffleBlock = ShuffleDataBlockId(shuffleId, mapId, reduceId)
       stream = RemoteShuffleStorage.getStream(shuffleBlock)
       val bufferSize: Long = conf.getSizeAsBytes(REMOTE_SHUFFLE_BUFFER_SIZE.key, "64M")
       bufferedStream = new BufferedOutputStream(stream, bufferSize.toInt)
     }
   }
 
-  def initChannel(): Unit = {
+  def initChannel(reduceId: Int): Unit = {
     if (bufferedStreamAsChannel == null) {
-      initStream()
+      initStream(reduceId)
       bufferedStreamAsChannel = Channels.newChannel(bufferedStream)
     }
   }
@@ -145,7 +145,7 @@ class RemoteShuffleMapOutputWriter(
     private var partitionChannel: RemoteShufflePartitionWriterChannel = _
 
     override def openStream(): OutputStream = {
-      initStream()
+      initStream(reduceId)
       if (partitionStream == null) {
         partitionStream = new RemoteShuffleOutputStream(reduceId)
       }
@@ -154,7 +154,7 @@ class RemoteShuffleMapOutputWriter(
 
     override def openChannelWrapper(): Optional[WritableByteChannelWrapper] = {
       if (partitionChannel == null) {
-        initChannel()
+        initChannel(reduceId)
         partitionChannel = new RemoteShufflePartitionWriterChannel(reduceId)
       }
       Optional.of(partitionChannel)
