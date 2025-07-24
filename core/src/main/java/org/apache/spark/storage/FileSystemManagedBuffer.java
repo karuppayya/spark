@@ -113,10 +113,6 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
 
   @Override
   public String toString() {
-    return new ToStringBuilder(this, ToStringStyle.SHORT_PREFIX_STYLE)
-      .append("filePath", filePath)
-      .append("fileSize", fileSize)
-      .append("bufferSize", bufferSize)
-      .toString();
+    return "FileSegmentManagedBuffer[file=" + filePath + ",length=" + fileSize + "]";
   }
 }

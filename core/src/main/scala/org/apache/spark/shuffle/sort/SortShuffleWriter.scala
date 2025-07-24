@@ -23,6 +23,7 @@ import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.{BaseShuffleHandle, ShuffleWriter}
 import org.apache.spark.shuffle.ShuffleWriteMetricsReporter
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
+import org.apache.spark.storage.RemoteShuffleStorage
 import org.apache.spark.util.collection.ExternalSorter
 
 private[spark] class SortShuffleWriter[K, V, C](
@@ -69,7 +70,9 @@ private[spark] class SortShuffleWriter[K, V, C](
       dep.shuffleId, mapId, dep.partitioner.numPartitions)
     sorter.writePartitionedMapOutput(dep.shuffleId, mapId, mapOutputWriter, writeMetrics)
     partitionLengths = mapOutputWriter.commitAllPartitions(sorter.getChecksums).getPartitionLengths
-    mapStatus = MapStatus(blockManager.shuffleServerId, partitionLengths, mapId)
+    val blockManagerId = if (dep.useRemoteShuffleStorage) RemoteShuffleStorage.BLOCK_MANAGER_ID
+      else blockManager.shuffleServerId
+    mapStatus = MapStatus(blockManagerId, partitionLengths, mapId)
   }
 
   /** Close this writer, passing along whether the map completed */
