@@ -21,7 +21,6 @@ import org.apache.spark.{ShuffleDependency, SparkEnv, TaskContext}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.LogKeys.{NUM_MERGER_LOCATIONS, SHUFFLE_ID, STAGE_ID}
 import org.apache.spark.scheduler.MapStatus
-import org.apache.spark.storage.RemoteShuffleStorage
 
 /**
  * The interface for customizing shuffle write process. The driver create a ShuffleWriteProcessor
@@ -84,8 +83,6 @@ private[spark] class ShuffleWriteProcessor extends Serializable with Logging {
                 .initiateBlockPush(dataFile, writer.getPartitionLengths(), dep, mapIndex)
             case _ =>
           }
-        } else if (dep.useRemoteShuffleStorage) {
-          mapStatus.get.updateLocation(RemoteShuffleStorage.BLOCK_MANAGER_ID)
         }
       }
 
