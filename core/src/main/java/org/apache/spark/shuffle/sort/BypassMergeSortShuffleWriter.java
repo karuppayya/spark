@@ -211,8 +211,10 @@ final class BypassMergeSortShuffleWriter<K, V>
       try {
         for (int i = 0; i < numPartitions; i++) {
           final File file = partitionWriterSegments[i].file();
-          ShufflePartitionWriter writer = mapOutputWriter.getPartitionWriter(i);
           if (file.exists()) {
+            // TODO: Remove thsi comment: the line below was moved so that assertions
+            //  cann be added and in general safe
+            ShufflePartitionWriter writer = mapOutputWriter.getPartitionWriter(i);
             if (transferToEnabled) {
               // Using WritableByteChannelWrapper to make resource closing consistent between
               // this implementation and UnsafeShuffleWriter.

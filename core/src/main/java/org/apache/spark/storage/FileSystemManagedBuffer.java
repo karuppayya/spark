@@ -27,19 +27,16 @@ import org.apache.hadoop.fs.Path;
 import org.apache.commons.lang3.builder.ToStringBuilder;
 import org.apache.commons.lang3.builder.ToStringStyle;
 
-import org.apache.spark.SparkEnv;
 import org.apache.spark.network.buffer.ManagedBuffer;
 
 /**
  * A {@link ManagedBuffer} backed by a file using Hadoop FileSystem.
  * This buffer creates an input stream with a 64MB buffer size for efficient reading.
- * 
  * Note: This implementation throws UnsupportedOperationException for methods that
  * require loading the entire file into memory (nioByteBuffer, convertToNetty, convertToNettyForSsl)
  * as files can be very large and loading them entirely into memory is not practical.
  */
 public class FileSystemManagedBuffer extends ManagedBuffer {
-  
   private int bufferSize; // 64MB buffer size
   private final Path filePath;
   private final long fileSize;
@@ -48,7 +45,6 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
   public FileSystemManagedBuffer(Path filePath, Configuration hadoopConf) throws IOException {
     this.filePath = filePath;
     this.hadoopConf = hadoopConf;
-    
     // Get file size using FileSystem.newInstance to avoid cached dependencies
     FileSystem fileSystem = FileSystem.newInstance(filePath.toUri(), hadoopConf);
     try {
@@ -59,7 +55,8 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
     bufferSize = 64;
   }
 
-  public FileSystemManagedBuffer(Path filePath, Configuration hadoopConf, int bufferSize) throws IOException {
+  public FileSystemManagedBuffer(Path filePath, Configuration hadoopConf, int bufferSize)
+          throws IOException {
     this(filePath, hadoopConf);
     this.bufferSize = bufferSize;
   }
@@ -108,7 +105,8 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
   @Override
   public Object convertToNettyForSsl() throws IOException {
     throw new UnsupportedOperationException(
-      "FileSystemManagedBuffer does not support convertToNettyForSsl() as it would require loading " +
+      "FileSystemManagedBuffer does not support convertToNettyForSsl()" +
+              " as it would require loading " +
       "the entire file into memory, which is not practical for large files. " +
       "Use createInputStream() instead.");
   }
@@ -121,4 +119,4 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
       .append("bufferSize", bufferSize)
       .toString();
   }
-} 
+}
