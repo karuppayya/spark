@@ -420,7 +420,7 @@ trait V2TableWriteExec extends V2CommandExec with UnaryExecNode with AdaptiveSpa
       val tempRdd = query.execute()
       // SPARK-23271 If we are attempting to write a zero partition rdd, create a dummy single
       // partition rdd to make sure we at least set up one write task to write the metadata.
-      if (tempRdd.partitions.length == 0) {
+        if (tempRdd.partitions.length == 0) {
         sparkContext.parallelize(Array.empty[InternalRow].toImmutableArraySeq, 1)
       } else {
         tempRdd
