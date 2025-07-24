@@ -30,7 +30,6 @@ import org.apache.spark.internal.config.{SPARK_DRIVER_PREFIX, SPARK_EXECUTOR_PRE
 import org.apache.spark.internal.config.Tests.IS_TESTING
 import org.apache.spark.sql.classic.SparkSession
 import org.apache.spark.sql.execution.adaptive.AdaptiveSparkPlanExec
-import org.apache.spark.sql.execution.datasources.v2.V2CommandExec
 import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
 import org.apache.spark.sql.execution.ui.{SparkListenerSQLExecutionEnd, SparkListenerSQLExecutionStart}
 import org.apache.spark.sql.internal.SQLConf
@@ -178,11 +177,7 @@ object SQLExecution extends Logging {
               if (queryExecution.shuffleCleanupMode != DoNotCleanup
                 && isExecutedPlanAvailable) {
                 val shuffleIds = queryExecution.executedPlan match {
-                  case c: V2CommandExec if c.children.size == 1 &&
-                    c.children.head.isInstanceOf[AdaptiveSparkPlanExec] =>
-                    c.children.head.asInstanceOf[AdaptiveSparkPlanExec]
-                      .context.shuffleIds.asScala.keys
-                  case ae: AdaptiveSparkPlanExec =>
+                 case ae: AdaptiveSparkPlanExec =>
                     ae.context.shuffleIds.asScala.keys
                   case nonAdaptivePlan =>
                     nonAdaptivePlan.collect {
