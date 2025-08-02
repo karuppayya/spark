@@ -29,7 +29,7 @@ import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.deploy.SparkHadoopUtil
 import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.internal.LogKeys._
-import org.apache.spark.internal.config.{STORAGE_DECOMMISSION_FALLBACK_STORAGE_CLEANUP, STORAGE_DECOMMISSION_FALLBACK_STORAGE_PATH}
+import org.apache.spark.internal.config.{REMOTE_SHUFFLE_BUFFER_SIZE, SHUFFLE_REMOTE_STORAGE_CLEANUP, SHUFFLE_REMOTE_STORAGE_PATH}
 import org.apache.spark.network.shuffle.BlockFetchingListener
 import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.rpc.{RpcAddress, RpcEndpointRef, RpcTimeout}
@@ -69,35 +69,35 @@ private[spark] object RemoteShuffleStorage extends Logging {
   val blockManagerId = "remoteShuffleBlockStore"
   lazy val hadoopConf: Configuration = SparkHadoopUtil.get.newConfiguration(SparkEnv.get.conf)
   val appId: String = SparkEnv.get.conf.getAppId
-  val remoteStoragePath = new Path(SparkEnv.get.
-    conf.get(STORAGE_DECOMMISSION_FALLBACK_STORAGE_PATH).get)
-  val remoteFileSystem: FileSystem = FileSystem.get(remoteStoragePath.toUri, hadoopConf)
+  lazy val remoteStoragePath = new Path(SparkEnv.get.conf.get(SHUFFLE_REMOTE_STORAGE_PATH).get)
+  lazy val remoteFileSystem: FileSystem = FileSystem.get(remoteStoragePath.toUri, hadoopConf)
 
   /** We use one block manager id as a place holder. */
   val BLOCK_MANAGER_ID: BlockManagerId = BlockManagerId(blockManagerId, "remote", 7337)
 
   /** Register the remote shuffle block manager and its RPC endpoint. */
   def registerBlockManager(master: BlockManagerMaster, conf: SparkConf): Unit = {
-    master.registerBlockManager(
-      BLOCK_MANAGER_ID, Array.empty[String], 0, 0, new RemoteStorageRpcEndpointRef(conf))
+    if (conf.get(SHUFFLE_REMOTE_STORAGE_PATH).isDefined) {
+      master.registerBlockManager(
+        BLOCK_MANAGER_ID, Array.empty[String], 0, 0, new RemoteStorageRpcEndpointRef(conf))
+    }
   }
 
-  /** Clean up the generated fallback location for this app. */
+  /** Clean up the generated remote shuffle location for this app. */
   def cleanUp(conf: SparkConf, hadoopConf: Configuration): Unit = {
-    if (conf.get(STORAGE_DECOMMISSION_FALLBACK_STORAGE_PATH).isDefined &&
-      conf.get(STORAGE_DECOMMISSION_FALLBACK_STORAGE_CLEANUP) &&
+    if (conf.get(SHUFFLE_REMOTE_STORAGE_PATH).isDefined &&
+      conf.get(SHUFFLE_REMOTE_STORAGE_CLEANUP) &&
       conf.contains("spark.app.id")) {
-      val fallbackPath =
-        new Path(conf.get(STORAGE_DECOMMISSION_FALLBACK_STORAGE_PATH).get, conf.getAppId)
-      val fallbackUri = fallbackPath.toUri
-      val remoteFileSystem = FileSystem.get(fallbackUri, hadoopConf)
-      // The fallback directory for this app may not be created yet.
-      if (remoteFileSystem.exists(fallbackPath)) {
-        if (remoteFileSystem.delete(fallbackPath, true)) {
-          logInfo(log"Succeed to clean up: ${MDC(URI, fallbackUri)}")
+      val shuffleRemotePath =
+        new Path(conf.get(SHUFFLE_REMOTE_STORAGE_PATH).get, conf.getAppId)
+      val remoteUri = shuffleRemotePath.toUri
+      val remoteFileSystem = FileSystem.get(remoteUri, hadoopConf)
+      if (remoteFileSystem.exists(shuffleRemotePath)) {
+        if (remoteFileSystem.delete(shuffleRemotePath, true)) {
+          logInfo(log"Succeed to clean up: ${MDC(URI, remoteUri)}")
         } else {
           // Clean-up can fail due to the permission issues.
-          logWarning(log"Failed to clean up: ${MDC(URI, fallbackUri)}")
+          logWarning(log"Failed to clean up: ${MDC(URI, remoteUri)}")
         }
       }
     }
@@ -110,8 +110,10 @@ private[spark] object RemoteShuffleStorage extends Logging {
     assert(blockIds.size == 1)
     val blockId = blockIds.head
     logInfo(log"Read ${MDC(BLOCK_ID, blockId)}")
+
     listener.onBlockFetchSuccess(blockId.name,
-      new FileSystemManagedBuffer(getPath(blockId), hadoopConf))
+      new FileSystemManagedBuffer(getPath(blockId), hadoopConf,
+        SparkEnv.get.conf.getSizeAsMb(REMOTE_SHUFFLE_BUFFER_SIZE.key, "64M").toInt))
   }
 
   def getPath(blockId: BlockId): Path = {

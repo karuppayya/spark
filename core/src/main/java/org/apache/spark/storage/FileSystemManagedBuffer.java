@@ -24,8 +24,6 @@ import java.nio.ByteBuffer;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.commons.lang3.builder.ToStringBuilder;
-import org.apache.commons.lang3.builder.ToStringStyle;
 
 import org.apache.spark.network.buffer.ManagedBuffer;
 
@@ -95,7 +93,7 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
   }
 
   @Override
-  public Object convertToNetty() throws IOException {
+  public Object convertToNetty() {
     throw new UnsupportedOperationException(
       "FileSystemManagedBuffer does not support convertToNetty() as it would require loading " +
       "the entire file into memory, which is not practical for large files. " +
@@ -103,7 +101,7 @@ public class FileSystemManagedBuffer extends ManagedBuffer {
   }
 
   @Override
-  public Object convertToNettyForSsl() throws IOException {
+  public Object convertToNettyForSsl() {
     throw new UnsupportedOperationException(
       "FileSystemManagedBuffer does not support convertToNettyForSsl()" +
               " as it would require loading " +
