@@ -26,11 +26,12 @@ import org.apache.spark.sql.internal.SQLConf
 object AddConsolidationShuffle extends Rule[SparkPlan] {
 
   def apply(plan: SparkPlan): SparkPlan = {
-    if (!SQLConf.get.additionalShuffleStage) {
+    if (!SQLConf.get.shuffleConsolidationEnabled) {
       return plan
     }
     plan transformUp {
-      case plan @ ShuffleExchangeExec(part, _, origin, _) if SQLConf.get.additionalShuffleStage =>
+      case plan @ ShuffleExchangeExec(part, _, origin, _)
+        if SQLConf.get.shuffleConsolidationEnabled =>
         // Non adaptive
         ShuffleExchangeExec(PassThroughPartitioning(part), plan,
           origin)

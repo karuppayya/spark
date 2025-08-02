@@ -649,15 +649,6 @@ case class AdaptiveSparkPlanExec(
       }
   }
 
-  def isRemoteExchange(e: Exchange): Boolean = {
-    e match {
-      case shuffleExchange: ShuffleExchangeExec =>
-        shuffleExchange.shuffleDependency.useRemoteShuffleStorage
-      case _ =>
-        false
-    }
-  }
-
   private def newResultQueryStage(
       resultHandler: SparkPlan => Any,
       plan: SparkPlan): ResultQueryStageExec = {

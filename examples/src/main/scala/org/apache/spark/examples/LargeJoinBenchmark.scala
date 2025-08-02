@@ -118,7 +118,7 @@ object LargeJoinBenchmark {
 
         spark.time {
           spark.sql(s"set ${SQLConf.SHUFFLE_PARTITIONS.key}=200")
-          spark.sql(s"set ${SQLConf.ENABLE_SHUFFLE_CONSOLIDATION_TO_REMOTE.key}=$enabled")
+          spark.sql(s"set ${SQLConf.ENABLE_SHUFFLE_CONSOLIDATION.key}=$enabled")
 
           // --- Join Operation ---
           println("\n--- Starting Join Operation ---")
