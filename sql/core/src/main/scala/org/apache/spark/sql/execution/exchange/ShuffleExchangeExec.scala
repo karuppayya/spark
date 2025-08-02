@@ -464,20 +464,11 @@ object ShuffleExchangeExec {
           iter.map { row => (part.getPartition(getPartitionKey(row)), row.copy()) }
         }, isOrderSensitive = isOrderSensitive)
       } else {
-        if (newPartitioning.isInstanceOf[PassThroughPartitioning]) {
-          newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-            val mutablePair = new MutablePair[Int, InternalRow]()
-            val partId = TaskContext.getPartitionId()
-            iter.map { row => mutablePair.update(partId, row) }
-          }, isOrderSensitive = isOrderSensitive)
-        } else {
-          newRdd.mapPartitionsWithIndexInternal((_, iter) => {
-            val getPartitionKey = getPartitionKeyExtractor()
-            val mutablePair = new MutablePair[Int, InternalRow]()
-            iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
-          }, isOrderSensitive = isOrderSensitive)
-        }
-
+        newRdd.mapPartitionsWithIndexInternal((_, iter) => {
+          val getPartitionKey = getPartitionKeyExtractor()
+          val mutablePair = new MutablePair[Int, InternalRow]()
+          iter.map { row => mutablePair.update(part.getPartition(getPartitionKey(row)), row) }
+        }, isOrderSensitive = isOrderSensitive)
       }
     }
 

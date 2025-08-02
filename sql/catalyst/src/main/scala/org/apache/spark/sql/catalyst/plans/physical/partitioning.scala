@@ -617,15 +617,13 @@ case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
 }
 
 /**
- * A custom partitioning that always satisfies any distribution.
+ * A partitioning that always satisfies any distribution.
  * This is useful when you want to ensure that a partitioning will always satisfy a distribution
  * regardless of the distribution's requirements.
  */
 case class PassThroughPartitioning(childPartitioning: Partitioning) extends Partitioning {
   /**
    * Always returns true, satisfying any distribution.
-   * This is the key feature of this partitioning - it will always satisfy any distribution
-   * as long as the number of partitions matches.
    */
   override def satisfies0(required: Distribution): Boolean = true
 

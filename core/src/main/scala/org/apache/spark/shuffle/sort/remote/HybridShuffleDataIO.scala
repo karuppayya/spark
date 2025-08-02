@@ -25,8 +25,8 @@ import org.apache.spark.shuffle.sort.io.LocalDiskShuffleDriverComponents
 import org.apache.spark.shuffle.sort.io.LocalDiskShuffleExecutorComponents
 
 /**
- * Implementation of the [[ShuffleDataIO]] plugin system that replicates the local shuffle
- * storage and index file functionality that has historically been used from Spark 2.4 and earlier.
+ * Implementation of the [[ShuffleDataIO]] plugin system that writes to the local and
+ * remote storage
  */
 class HybridShuffleDataIO(sparkConf: SparkConf) extends ShuffleDataIO {
 
