@@ -39,7 +39,7 @@ import org.apache.spark.errors.SparkCoreErrors
 import org.apache.spark.executor.{ExecutorMetrics, TaskMetrics}
 import org.apache.spark.internal.{config, Logging, LogKeys}
 import org.apache.spark.internal.LogKeys._
-import org.apache.spark.internal.config.{LEGACY_ABORT_STAGE_AFTER_KILL_TASKS, RDD_CACHE_VISIBILITY_TRACKING_ENABLED}
+import org.apache.spark.internal.config.{EAGERNESS_THRESHOLD_PERCENTAGE, LEGACY_ABORT_STAGE_AFTER_KILL_TASKS, RDD_CACHE_VISIBILITY_TRACKING_ENABLED}
 import org.apache.spark.internal.config.Tests.TEST_NO_STAGE_RETRY
 import org.apache.spark.network.shuffle.{BlockStoreClient, MergeFinalizerListener}
 import org.apache.spark.network.shuffle.protocol.MergeStatuses
@@ -780,7 +780,10 @@ private[spark] class DAGScheduler(
                 // Mark mapStage as available with shuffle outputs only after shuffle merge is
                 // finalized with push based shuffle. If not, subsequent ShuffleMapStage won't
                 // read from merged output as the MergeStatuses are not available.
-                if (!mapStage.isAvailable || !mapStage.shuffleDep.shuffleMergeFinalized) {
+                if (!shufDep.useRemoteShuffleStorage && (mapStage.isAvailable ||
+                  runningStages.contains(mapStage))) {
+                  // Start the stage while mapper is still running
+                } else if (!mapStage.isAvailable || !mapStage.shuffleDep.shuffleMergeFinalized) {
                   missing += mapStage
                 } else {
                   // Forward the nextAttemptId if skipped and get visited for the first time.
@@ -2005,7 +2008,20 @@ private[spark] class DAGScheduler(
             }
 
           case smt: ShuffleMapTask =>
+
             val shuffleStage = stage.asInstanceOf[ShuffleMapStage]
+
+            if (!shuffleStage.shuffleDep.useRemoteShuffleStorage) {
+              val availableOutputs = shuffleStage.numAvailableOutputs
+              val totalPartitions = shuffleStage.numPartitions
+              val completionPercentage = (availableOutputs.toDouble / totalPartitions) * 100.0
+              if (completionPercentage > sc.getConf.get(EAGERNESS_THRESHOLD_PERCENTAGE)) {
+                logDebug(s"karuppayya Trying to start waiting child stages for stage $stageId," +
+                  s" completion percentage $completionPercentage")
+                submitWaitingChildStages(shuffleStage)
+              }
+            }
+
             // Ignore task completion for old attempt of indeterminate stage
             val ignoreIndeterminate = stage.isIndeterminate &&
               task.stageAttemptId < stage.latestInfo.attemptNumber()

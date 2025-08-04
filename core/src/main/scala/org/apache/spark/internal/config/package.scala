@@ -622,6 +622,14 @@ package object config {
       .checkValue(_.endsWith(java.io.File.separator), "Path should end with separator.")
       .createOptional
 
+  private[spark] val EAGERNESS_THRESHOLD_PERCENTAGE =
+    ConfigBuilder("spark.shuffle.remote.eagerness.percentage")
+      .doc("The location for storing shuffle blocks on remote storage.")
+      .version("4.1.0")
+      .intConf
+      .createWithDefault(20)
+
+
   private[spark] val STORAGE_DECOMMISSION_FALLBACK_STORAGE_CLEANUP =
     ConfigBuilder("spark.storage.decommission.fallbackStorage.cleanUp")
       .doc("If true, Spark cleans up its fallback storage data during shutting down.")
@@ -2916,5 +2924,11 @@ package object config {
       .version("4.1.0")
       .stringConf
       .createWithDefault("64M")
+
+  private[spark] val REMOTE_SHUFFLE_CONSOLIDATION_ENABLED =
+    ConfigBuilder("spark.shuffle.consolidation.enabled")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
 
 }

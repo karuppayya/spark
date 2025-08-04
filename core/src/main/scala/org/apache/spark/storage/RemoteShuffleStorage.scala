@@ -27,7 +27,7 @@ import org.apache.hadoop.fs.{FileSystem, FSDataOutputStream, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
 import org.apache.spark.deploy.SparkHadoopUtil
-import org.apache.spark.internal.{Logging, MDC}
+import org.apache.spark.internal.Logging
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.internal.config.{REMOTE_SHUFFLE_BUFFER_SIZE, SHUFFLE_REMOTE_STORAGE_CLEANUP, SHUFFLE_REMOTE_STORAGE_PATH}
 import org.apache.spark.network.shuffle.BlockFetchingListener
