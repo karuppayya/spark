@@ -19,6 +19,7 @@ package org.apache.spark.sql.execution
 import scala.collection.mutable
 import scala.io.Source
 import scala.util.Try
+
 import org.apache.spark.sql.{AnalysisException, ExtendedExplainGenerator, FastOperator, SaveMode}
 import org.apache.spark.sql.catalyst.{QueryPlanningTracker, QueryPlanningTrackerCallback, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{CurrentNamespace, UnresolvedFunction, UnresolvedRelation}
