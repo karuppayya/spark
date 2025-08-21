@@ -20,7 +20,7 @@ import scala.collection.mutable
 import scala.io.Source
 import scala.util.Try
 
-import org.apache.spark.sql.{AnalysisException, ExtendedExplainGenerator, FastOperator}
+import org.apache.spark.sql.{AnalysisException, ExtendedExplainGenerator, FastOperator, SaveMode}
 import org.apache.spark.sql.catalyst.{QueryPlanningTracker, QueryPlanningTrackerCallback, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis.{CurrentNamespace, UnresolvedFunction, UnresolvedRelation}
 import org.apache.spark.sql.catalyst.expressions.{Alias, UnsafeRow}
@@ -331,6 +331,22 @@ class QueryExecutionSuite extends SharedSparkSession {
     Seq(true, false).foreach { adaptiveEnabled => {
       withSQLConf((SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, adaptiveEnabled.toString)) {
         val plan = spark.range(100).repartition(10).logicalPlan
+        val df = Dataset.ofRows(spark, plan, RemoveShuffleFiles)
+        df.write.format("noop").mode(SaveMode.Overwrite).save()
+
+        val blockManager = spark.sparkContext.env.blockManager
+        assert(blockManager.migratableResolver.getStoredShuffles().isEmpty)
+        assert(blockManager.diskBlockManager.getAllBlocks().isEmpty)
+        cleanupShuffles()
+        }
+      }
+    }
+  }
+
+  test("SPARK-477641: Cleanup shuffle dependencies - DoNotCleanup mode") {
+    Seq(true, false).foreach { adaptiveEnabled => {
+      withSQLConf((SQLConf.ADAPTIVE_EXECUTION_ENABLED.key, adaptiveEnabled.toString)) {
+        val plan = spark.range(100).repartition(10).logicalPlan
         val df = Dataset.ofRows(spark, plan, DoNotCleanup)
         df.collect()
 
@@ -338,8 +354,8 @@ class QueryExecutionSuite extends SharedSparkSession {
         assert(blockManager.migratableResolver.getStoredShuffles().nonEmpty)
         assert(blockManager.diskBlockManager.getAllBlocks().nonEmpty)
         cleanupShuffles()
-        }
       }
+    }
     }
   }
 
