@@ -780,7 +780,8 @@ private[spark] class DAGScheduler(
                 // Mark mapStage as available with shuffle outputs only after shuffle merge is
                 // finalized with push based shuffle. If not, subsequent ShuffleMapStage won't
                 // read from merged output as the MergeStatuses are not available.
-                if (!shufDep.useRemoteShuffleStorage && (mapStage.isAvailable ||
+                if (sc.conf.get(config.REMOTE_SHUFFLE_CONSOLIDATION_ENABLED) &&
+                  !shufDep.useRemoteShuffleStorage && (mapStage.isAvailable ||
                   runningStages.contains(mapStage))) {
                   // Start the stage while mapper is still running
                 } else if (!mapStage.isAvailable || !mapStage.shuffleDep.shuffleMergeFinalized) {
