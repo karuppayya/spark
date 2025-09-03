@@ -24,7 +24,7 @@ import java.util.Optional
 
 import org.apache.hadoop.fs.FSDataOutputStream
 
-import org.apache.spark.{SparkConf, SparkEnv}
+import org.apache.spark.{SparkConf, SparkEnv, TaskContext}
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.internal.config.REMOTE_SHUFFLE_BUFFER_SIZE
 import org.apache.spark.shuffle.api.{ShuffleMapOutputWriter, ShufflePartitionWriter, WritableByteChannelWrapper}
@@ -52,11 +52,10 @@ class RemoteShuffleMapOutputWriter(
   private var bufferedStream: OutputStream = _
   private var bufferedStreamAsChannel: WritableByteChannel = _
   private var reduceIdStreamPosition: Long = 0
-  private var reduceId: Int = _
 
   def initStream(): Unit = {
     if (stream == null) {
-      val shuffleBlock = ShuffleDataBlockId(shuffleId, mapId, reduceId)
+      val shuffleBlock = ShuffleDataBlockId(shuffleId, mapId, TaskContext.getPartitionId())
       stream = RemoteShuffleStorage.getStream(shuffleBlock)
       val bufferSize: Long = conf.getSizeAsBytes(REMOTE_SHUFFLE_BUFFER_SIZE.key, "64M")
       bufferedStream = new BufferedOutputStream(stream, bufferSize.toInt)
@@ -72,16 +71,8 @@ class RemoteShuffleMapOutputWriter(
 
   private val partitionLengths = Array.fill[Long](numPartitions)(0)
   private var totalBytesWritten: Long = 0
-  private var lastPartitionWriterId: Int = -1
 
   override def getPartitionWriter(reducePartitionId: Int): ShufflePartitionWriter = {
-    if (stream == null) {
-      reduceId = reducePartitionId
-    } else {
-      // For the given mapper, there will be one reducer it has data for
-      assert(reducePartitionId == reduceId)
-    }
-
     if (bufferedStream != null) {
       bufferedStream.flush()
     }
@@ -89,7 +80,6 @@ class RemoteShuffleMapOutputWriter(
       stream.flush()
       reduceIdStreamPosition = stream.getPos
     }
-    lastPartitionWriterId = reducePartitionId
     new RemoteShufflePartitionWriter(reducePartitionId)
   }
 
