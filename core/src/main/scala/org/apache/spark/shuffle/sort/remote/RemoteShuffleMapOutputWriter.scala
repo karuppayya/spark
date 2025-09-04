@@ -72,17 +72,10 @@ class RemoteShuffleMapOutputWriter(
 
   private val partitionLengths = Array.fill[Long](numPartitions)(0)
   private var totalBytesWritten: Long = 0
-  private var lastPartitionWriterId: Int = -1
 
   override def getPartitionWriter(reducePartitionId: Int): ShufflePartitionWriter = {
-    if (stream == null) {
-      reduceId = reducePartitionId
-    } else {
-      // For the given mapper, there will be one reducer it has data for
-      // assert(reducePartitionId == reduceId)
-      // could be called multiple time during spill merge, but will be a no-op
-    }
-
+    // For the given mapper, there will be one reducer it has data for
+    reduceId = reducePartitionId
     if (bufferedStream != null) {
       bufferedStream.flush()
     }
@@ -90,7 +83,6 @@ class RemoteShuffleMapOutputWriter(
       stream.flush()
       reduceIdStreamPosition = stream.getPos
     }
-    lastPartitionWriterId = reducePartitionId
     new RemoteShufflePartitionWriter(reducePartitionId)
   }
 
