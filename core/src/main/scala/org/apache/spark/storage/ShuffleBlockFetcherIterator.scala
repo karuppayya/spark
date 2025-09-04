@@ -851,12 +851,14 @@ final class ShuffleBlockFetcherIterator(
     // Check if we have more blocks to process from current fetch
     val hasMoreCurrentBlocks = numBlocksProcessed < numBlocksToFetch
     logMe(s"hasMoreCurrentBlocks: ${hasMoreCurrentBlocks}," +
-      s" numBlocksProcessed: ${numBlocksProcessed}, numBlocksToFetch: ${numBlocksToFetch}")
+      s" numBlocksProcessed: ${numBlocksProcessed}, numBlocksToFetch: ${numBlocksToFetch}," +
+      s" discoveryComplete: $discoveryComplete")
     hasMoreCurrentBlocks || !discoveryComplete
   }
 
   private def logMe(msg: String): Unit = {
-    logDebug(s"Karuppayya reduceId: ${TaskContext.getPartitionId()}, msg: ${msg}")
+    logDebug(s"Karuppayya reduceId: ${TaskContext.getPartitionId()}," +
+      s" shuffleId: ${shuffleDependency.shuffleId} , msg: ${msg}")
   }
   /**
    * Fetches the next (BlockId, InputStream). If a task fails, the ManagedBuffers
