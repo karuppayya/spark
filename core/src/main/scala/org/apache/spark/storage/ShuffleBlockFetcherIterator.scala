@@ -119,7 +119,7 @@ final class ShuffleBlockFetcherIterator(
   /**
    * Discovery status.
    */
-  private[this] var discoveryComplete = false
+  private[this] var discoveryComplete = shuffleDependency.useRemoteShuffleStorage
 
   /**
    * The number of blocks processed by the caller. The iterator is exhausted when
