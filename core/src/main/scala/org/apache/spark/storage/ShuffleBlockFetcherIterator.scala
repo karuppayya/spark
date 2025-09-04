@@ -727,6 +727,7 @@ final class ShuffleBlockFetcherIterator(
       blocksByAddress, localBlocks, hostLocalBlocksByExecutor, pushMergedLocalBlocks)
     // Add the remote requests into our queue in a random order
     fetchRequests ++= Utils.randomize(remoteRequests)
+    logMe(s"Fetch request: $fetchRequests")
     assert ((0 == reqsInFlight) == (0 == bytesInFlight),
       "expected reqsInFlight = 0 but found reqsInFlight = " + reqsInFlight +
       ", expected bytesInFlight = 0 but found bytesInFlight = " + bytesInFlight)
@@ -750,8 +751,9 @@ final class ShuffleBlockFetcherIterator(
   }
 
   private def fetchShuffleBlocks(blocksByAddress: Iterator[(BlockManagerId,
-    collection.Seq[(BlockId, Long, Int)])]) = {
+    collection.Seq[(BlockId, Long, Int)])]): Unit = {
 
+    logMe("Fethcing shuffleblocks")
     val toProcess = blocksByAddress.map { case (address, blockInfos) =>
       val unfetchedBlocks = blockInfos.filter { case (blockId, _, _) =>
         !fetchedBlocks.contains(blockId)
@@ -1190,6 +1192,7 @@ final class ShuffleBlockFetcherIterator(
   }
 
   private def discoverNewMapOutputs(): Unit = {
+    logMe("Discovering map outputs")
     if (!discoveryComplete) {
       val summary = SparkEnv.get.mapOutputTracker.
         getNumAvailableOutputsForShuffleAndReduce(shuffleDependency.shuffleId,
