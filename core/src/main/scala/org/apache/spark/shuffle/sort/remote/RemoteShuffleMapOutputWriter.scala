@@ -148,6 +148,8 @@ class RemoteShuffleMapOutputWriter(
 
     override def openChannelWrapper(): Optional[WritableByteChannelWrapper] = {
       if (partitionChannel == null) {
+        // This mapper is going to write data for only one reducere
+        RemoteShuffleMapOutputWriter.this.reduceId = reduceId
         initChannel()
         partitionChannel = new RemoteShufflePartitionWriterChannel(reduceId)
       }
