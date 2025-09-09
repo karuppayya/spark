@@ -614,8 +614,31 @@ package object config {
       .checkValue(_.endsWith(java.io.File.separator), "Path should end with separator.")
       .createOptional
 
+  private[spark] val SHUFFLE_REMOTE_STORAGE_PATH =
+    ConfigBuilder("spark.shuffle.remote.storage.path")
+      .doc("The location for storing shuffle blocks on remote storage.")
+      .version("4.1.0")
+      .stringConf
+      .checkValue(_.endsWith(java.io.File.separator), "Path should end with separator.")
+      .createOptional
+
+  private[spark] val EAGERNESS_THRESHOLD_PERCENTAGE =
+    ConfigBuilder("spark.shuffle.remote.eagerness.percentage")
+      .doc("The location for storing shuffle blocks on remote storage.")
+      .version("4.1.0")
+      .intConf
+      .createWithDefault(20)
+
+
   private[spark] val STORAGE_DECOMMISSION_FALLBACK_STORAGE_CLEANUP =
     ConfigBuilder("spark.storage.decommission.fallbackStorage.cleanUp")
+      .doc("If true, Spark cleans up its fallback storage data during shutting down.")
+      .version("3.2.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  private[spark] val SHUFFLE_REMOTE_STORAGE_CLEANUP =
+    ConfigBuilder("spark.shuffle.remote.storage.cleanUp")
       .doc("If true, Spark cleans up its fallback storage data during shutting down.")
       .version("3.2.0")
       .booleanConf
@@ -2904,4 +2927,17 @@ package object config {
       .checkValue(v => v.forall(Set("stdout", "stderr").contains),
         "The value only can be one or more of 'stdout, stderr'.")
       .createWithDefault(Seq("stdout", "stderr"))
+
+  private[spark] val REMOTE_SHUFFLE_BUFFER_SIZE =
+    ConfigBuilder("spark.shuffle.remote.buffer.size")
+      .version("4.1.0")
+      .stringConf
+      .createWithDefault("64M")
+
+  private[spark] val REMOTE_SHUFFLE_CONSOLIDATION_ENABLED =
+    ConfigBuilder("spark.shuffle.consolidation.enabled")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
 }
