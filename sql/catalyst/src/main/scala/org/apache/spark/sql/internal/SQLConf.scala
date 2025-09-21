@@ -3640,6 +3640,17 @@ object SQLConf {
       .version("4.1.0")
       .fallbackConf(SHUFFLE_DEPENDENCY_FILE_CLEANUP_ENABLED)
 
+  val ENABLE_SHUFFLE_CONSOLIDATION =
+    buildConf("spark.sql.shuffle.consolidation.enabled")
+      .doc("When enabled, creates a consolidation shuffle stage that consolidates shuffle data " +
+        "from earlier stages and uploads it to remote storage. This " +
+        "consolidation stage uses PassThroughPartitioning to satisfy distribution requirements " +
+        "without changing the actual data partitioning. The remote storage upload can improve " +
+        "shuffle performance and enable better resource utilization in distributed environments.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val SORT_MERGE_JOIN_EXEC_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sortMergeJoinExec.buffer.in.memory.threshold")
       .internal()
@@ -7454,8 +7465,7 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def hadoopLineRecordReaderEnabled: Boolean = getConf(SQLConf.HADOOP_LINE_RECORD_READER_ENABLED)
 
-  def legacyXMLParserEnabled: Boolean =
-    getConf(SQLConf.LEGACY_XML_PARSER_ENABLED)
+  def shuffleConsolidationEnabled: Boolean = getConf(SQLConf.ENABLE_SHUFFLE_CONSOLIDATION)
 
   /** ********************** SQLConf functionality methods ************ */
 

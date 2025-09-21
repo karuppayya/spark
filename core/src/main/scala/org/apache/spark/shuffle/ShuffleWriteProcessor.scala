@@ -85,6 +85,7 @@ private[spark] class ShuffleWriteProcessor extends Serializable with Logging {
           }
         }
       }
+
       mapStatus.get
     } catch {
       case e: Exception =>
