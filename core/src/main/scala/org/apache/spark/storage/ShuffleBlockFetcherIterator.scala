@@ -364,10 +364,15 @@ final class ShuffleBlockFetcherIterator(
       }
     }
 
+    if (req.address == RemoteShuffleStorage.BLOCK_MANAGER_ID) {
+      // TODO: fix this, donot use object here
+      RemoteShuffleStorage.read(req.blocks.map(_.blockId).toSeq,
+        blockFetchingListener)
+    }
     // Fetch remote shuffle blocks to disk when the request is too large. Since the shuffle data is
     // already encrypted and compressed over the wire(w.r.t. the related configs), we can just fetch
     // the data and write it to file directly.
-    if (req.size > maxReqSizeShuffleToMem) {
+    else if (req.size > maxReqSizeShuffleToMem) {
       shuffleClient.fetchBlocks(address.host, address.port, address.executorId, blockIds.toArray,
         blockFetchingListener, this)
     } else {
