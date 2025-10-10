@@ -32,9 +32,13 @@ private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
     val priority2 = s2.priority
     var res = math.signum(priority1 - priority2)
     if (res == 0) {
-      val stageId1 = s1.stageId
-      val stageId2 = s2.stageId
-      res = math.signum(stageId1 - stageId2)
+      if (s1.weight == s2.weight) {
+        val stageId1 = s1.stageId
+        val stageId2 = s2.stageId
+        res = math.signum(stageId1 - stageId2)
+      } else {
+        res = math.signum(s1.weight - s2.weight)
+      }
     }
     res < 0
   }
