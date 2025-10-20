@@ -133,7 +133,13 @@ case class ShuffleExchangeExec(
     "numPartitions" -> SQLMetrics.createMetric(sparkContext, "number of partitions")
   ) ++ readMetrics ++ writeMetrics
 
-  override def nodeName: String = "Exchange"
+  override def nodeName: String = {
+    if (shuffleDependency.useRemoteShuffleStorage) {
+      "Consolidation exchange"
+    } else {
+      "Exchange"
+    }
+  }
 
   private lazy val serializer: Serializer =
     new UnsafeRowSerializer(child.output.size, longMetric("dataSize"))
@@ -299,6 +305,7 @@ object ShuffleExchangeExec {
           ascending = true,
           samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
       case SinglePartition => new ConstantPartitioner
+      case part: PassThroughPartitioning => new PartitionIdPassthrough(part.numPartitions)
       case _ => throw new IllegalStateException(s"Exchange not implemented for $newPartitioning")
       // TODO: Handle BroadcastPartitioning.
     }
@@ -325,6 +332,9 @@ object ShuffleExchangeExec {
         val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
         row => projection(row)
       case SinglePartition => identity
+      case _: PassThroughPartitioning =>
+        lazy val partitionId: Int = TaskContext.getPartitionId()
+        _ => partitionId
       case _ => throw new IllegalStateException(s"Exchange not implemented for $newPartitioning")
     }
 
@@ -402,7 +412,8 @@ object ShuffleExchangeExec {
         rddWithPartitionIds,
         new PartitionIdPassthrough(part.numPartitions),
         serializer,
-        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics))
+        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
+        useRemoteShuffleStorage = newPartitioning.isInstanceOf[PassThroughPartitioning] )
 
     dependency
   }

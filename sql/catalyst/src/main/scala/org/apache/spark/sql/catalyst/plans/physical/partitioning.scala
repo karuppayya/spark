@@ -545,6 +545,26 @@ case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
 }
 
 /**
+ * A partitioning that always satisfies any distribution.
+ * This is useful when you want to ensure that a partitioning will always satisfy a distribution
+ * regardless of the distribution's requirements.
+ */
+case class PassThroughPartitioning(childPartitioning: Partitioning) extends Partitioning {
+  /**
+   * Always returns true, satisfying any distribution.
+   */
+  override def satisfies0(required: Distribution): Boolean = true
+
+  override def createShuffleSpec(distribution: ClusteredDistribution): ShuffleSpec = {
+    childPartitioning.createShuffleSpec(distribution)
+  }
+
+  /** Returns the number of partitions that the data is split across */
+  override val numPartitions: Int = childPartitioning.numPartitions
+}
+
+
+/**
  * This is used in the scenario where an operator has multiple children (e.g., join) and one or more
  * of which have their own requirement regarding whether its data can be considered as
  * co-partitioned from others. This offers APIs for:

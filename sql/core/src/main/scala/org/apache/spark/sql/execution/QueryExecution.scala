@@ -446,6 +446,7 @@ object QueryExecution {
       PlanSubqueries(sparkSession),
       RemoveRedundantProjects,
       EnsureRequirements(),
+      AddConsolidationShuffle,
       // `ReplaceHashWithSortAgg` needs to be added after `EnsureRequirements` to guarantee the
       // sort order of each node is checked to be valid.
       ReplaceHashWithSortAgg,

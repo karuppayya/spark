@@ -93,6 +93,7 @@ final class BypassMergeSortShuffleWriter<K, V>
   private final long mapId;
   private final Serializer serializer;
   private final ShuffleExecutorComponents shuffleExecutorComponents;
+  private final boolean remoteWrites;
 
   /** Array of file writers, one for each partition */
   private DiskBlockObjectWriter[] partitionWriters;
@@ -124,6 +125,7 @@ final class BypassMergeSortShuffleWriter<K, V>
     this.mapId = mapId;
     this.shuffleId = dep.shuffleId();
     this.partitioner = dep.partitioner();
+    this.remoteWrites = dep.useRemoteShuffleStorage();
     this.numPartitions = partitioner.numPartitions();
     this.writeMetrics = writeMetrics;
     this.serializer = dep.serializer();
@@ -136,12 +138,14 @@ final class BypassMergeSortShuffleWriter<K, V>
     assert (partitionWriters == null);
     ShuffleMapOutputWriter mapOutputWriter = shuffleExecutorComponents
         .createMapOutputWriter(shuffleId, mapId, numPartitions);
+    BlockManagerId blockManagerId = remoteWrites ?
+      RemoteShuffleStorage.BLOCK_MANAGER_ID() : blockManager.shuffleServerId();
     try {
       if (!records.hasNext()) {
         partitionLengths = mapOutputWriter.commitAllPartitions(
           ShuffleChecksumHelper.EMPTY_CHECKSUM_VALUE).getPartitionLengths();
         mapStatus = MapStatus$.MODULE$.apply(
-          blockManager.shuffleServerId(), partitionLengths, mapId);
+          blockManagerId, partitionLengths, mapId);
         return;
       }
       final SerializerInstance serInstance = serializer.newInstance();
@@ -179,7 +183,7 @@ final class BypassMergeSortShuffleWriter<K, V>
 
       partitionLengths = writePartitionedData(mapOutputWriter);
       mapStatus = MapStatus$.MODULE$.apply(
-        blockManager.shuffleServerId(), partitionLengths, mapId);
+        blockManagerId, partitionLengths, mapId);
     } catch (Exception e) {
       try {
         mapOutputWriter.abort(e);
@@ -208,8 +212,10 @@ final class BypassMergeSortShuffleWriter<K, V>
       try {
         for (int i = 0; i < numPartitions; i++) {
           final File file = partitionWriterSegments[i].file();
-          ShufflePartitionWriter writer = mapOutputWriter.getPartitionWriter(i);
           if (file.exists()) {
+            // TODO: Remove thsi comment: the line below was moved so that assertions
+            //  cann be added and in general safe
+            ShufflePartitionWriter writer = mapOutputWriter.getPartitionWriter(i);
             if (transferToEnabled) {
               // Using WritableByteChannelWrapper to make resource closing consistent between
               // this implementation and UnsafeShuffleWriter.

@@ -19,9 +19,9 @@ package org.apache.spark.scheduler
 
 import java.io.NotSerializableException
 import java.nio.ByteBuffer
+import java.util.Locale
 import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue, TimeUnit}
 
-import scala.collection.immutable.Map
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import scala.math.max
 import scala.util.control.NonFatal
@@ -37,6 +37,7 @@ import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.scheduler.SchedulingMode._
 import org.apache.spark.util.{AccumulatorV2, Clock, LongAccumulator, SystemClock, Utils}
 import org.apache.spark.util.collection.PercentileHeap
+
 
 /**
  * Schedules the tasks within a single TaskSet in the TaskSchedulerImpl. This class keeps track of
@@ -134,7 +135,10 @@ private[spark] class TaskSetManager(
   val taskAttempts = Array.fill[List[TaskInfo]](numTasks)(Nil)
   private[scheduler] var tasksSuccessful = 0
 
-  val weight = 1
+  val weight = {
+    val remote: String = taskSet.properties.getOrDefault("remote", "false").toString
+    if (remote.toLowerCase(Locale.ROOT).equals("true")) 1000 else 1
+  }
   val minShare = 0
   var priority = taskSet.priority
   val stageId = taskSet.stageId

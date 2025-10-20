@@ -619,6 +619,7 @@ class SparkContext(config: SparkConf) extends Logging {
     _ui.foreach(_.setAppId(_applicationId))
     _env.blockManager.initialize(_applicationId)
     FallbackStorage.registerBlockManagerIfNeeded(_env.blockManager.master, _conf)
+    RemoteShuffleStorage.registerBlockManager(_env.blockManager.master, _conf)
 
     // The metrics system for Driver need to be set spark.app.id to app ID.
     // So it should start after we get app ID from the task scheduler and set spark.app.id.
@@ -2276,6 +2277,11 @@ class SparkContext(config: SparkConf) extends Logging {
     Utils.tryLogNonFatalError {
       FallbackStorage.cleanUp(_conf, _hadoopConfiguration)
     }
+
+    Utils.tryLogNonFatalError {
+      RemoteShuffleStorage.cleanUp(_conf, _hadoopConfiguration)
+    }
+
     Utils.tryLogNonFatalError {
       _eventLogger.foreach(_.stop())
     }
