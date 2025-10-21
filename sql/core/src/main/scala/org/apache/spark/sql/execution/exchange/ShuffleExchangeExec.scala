@@ -201,7 +201,13 @@ case class ShuffleExchangeExec(
     "numPartitions" -> SQLMetrics.createMetric(sparkContext, "number of partitions")
   ) ++ readMetrics ++ writeMetrics
 
-  override def nodeName: String = "Exchange"
+  override def nodeName: String = {
+    if (shuffleDependency.useRemoteShuffleStorage) {
+      "Consolidation exchange"
+    } else {
+      "Exchange"
+    }
+  }
 
   private lazy val serializer: Serializer =
     new UnsafeRowSerializer(child.output.size, longMetric("dataSize"))
