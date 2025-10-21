@@ -136,10 +136,12 @@ private[spark] object RemoteShuffleStorage extends Logging {
   }
 
   def writeCheckSum(blockId: BlockId, array: Array[Long]): Unit = {
-    val out = new DataOutputStream(new BufferedOutputStream(getStream(blockId),
-      scala.math.min(8192, 8 * array.length)))
-    array.foreach(out.writeLong)
-    out.flush()
-    out.close()
+    if (array.nonEmpty) {
+      val out = new DataOutputStream(new BufferedOutputStream(getStream(blockId),
+        scala.math.min(8192, 8 * array.length)))
+      array.foreach(out.writeLong)
+      out.flush()
+      out.close()
+    }
   }
 }
