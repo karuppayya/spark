@@ -4433,6 +4433,17 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val ENABLE_SHUFFLE_CONSOLIDATION =
+    buildConf("spark.sql.shuffle.consolidation.enabled")
+      .doc("When enabled, creates a consolidation shuffle stage that consolidates shuffle data " +
+        "from earlier stages and uploads it to remote storage. This " +
+        "consolidation stage uses PassThroughPartitioning to satisfy distribution requirements " +
+        "without changing the actual data partitioning. The remote storage upload can improve " +
+        "shuffle performance and enable better resource utilization in distributed environments.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
   /**
    * Holds information about keys that have been deprecated.
    *
@@ -5289,6 +5300,8 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def legacyNegativeIndexInArrayInsert: Boolean = {
     getConf(SQLConf.LEGACY_NEGATIVE_INDEX_IN_ARRAY_INSERT)
   }
+
+  def shuffleConsolidationEnabled: Boolean = getConf(SQLConf.ENABLE_SHUFFLE_CONSOLIDATION)
 
   /** ********************** SQLConf functionality methods ************ */
 

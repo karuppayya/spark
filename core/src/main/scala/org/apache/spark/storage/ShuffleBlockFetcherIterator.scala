@@ -363,10 +363,15 @@ final class ShuffleBlockFetcherIterator(
       }
     }
 
+    if (req.address == RemoteShuffleStorage.BLOCK_MANAGER_ID) {
+      // TODO: fix this, donot use object here
+      RemoteShuffleStorage.read(req.blocks.map(_.blockId).toSeq,
+        blockFetchingListener)
+    }
     // Fetch remote shuffle blocks to disk when the request is too large. Since the shuffle data is
     // already encrypted and compressed over the wire(w.r.t. the related configs), we can just fetch
     // the data and write it to file directly.
-    if (req.size > maxReqSizeShuffleToMem) {
+    else if (req.size > maxReqSizeShuffleToMem) {
       shuffleClient.fetchBlocks(address.host, address.port, address.executorId, blockIds.toArray,
         blockFetchingListener, this)
     } else {
@@ -706,7 +711,7 @@ final class ShuffleBlockFetcherIterator(
     val remoteRequests = partitionBlocksByFetchMode(
       blocksByAddress, localBlocks, hostLocalBlocksByExecutor, pushMergedLocalBlocks)
     // Add the remote requests into our queue in a random order
-    fetchRequests ++= Utils.randomize(remoteRequests)
+      fetchRequests ++= Utils.randomize(remoteRequests)
     assert ((0 == reqsInFlight) == (0 == bytesInFlight),
       "expected reqsInFlight = 0 but found reqsInFlight = " + reqsInFlight +
       ", expected bytesInFlight = 0 but found bytesInFlight = " + bytesInFlight)

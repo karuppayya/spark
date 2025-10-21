@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark._
 import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle._
+import org.apache.spark.shuffle.ShuffleDependencyRegistry
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents
 import org.apache.spark.util.collection.OpenHashSet
 
@@ -188,6 +189,8 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
         shuffleBlockResolver.removeDataByMap(shuffleId, mapTaskId)
       }
     }
+    // Also unregister from ShuffleDataRegistry
+    ShuffleDependencyRegistry.unregisterShuffleDependency(shuffleId)
     true
   }
 
