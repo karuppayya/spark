@@ -3661,6 +3661,15 @@ object SQLConf {
       .booleanConf
       .createWithDefault(false)
 
+  val SHUFFLE_CONSOLIDATION_SIZE_THRESHOLD =
+    buildConf("spark.sql.shuffle.consolidation.size.threshold")
+      .doc("Minimum shuffle size in bytes required to create a consolidation shuffle stage " +
+        "in adaptive execution. Only shuffles larger than this threshold will have a " +
+        "consolidation stage added. This helps avoid overhead for small shuffles.")
+      .version("4.1.0")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefault(100 * 1024 * 1024)
+
   val SORT_MERGE_JOIN_EXEC_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sortMergeJoinExec.buffer.in.memory.threshold")
       .internal()
@@ -7493,6 +7502,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def hadoopLineRecordReaderEnabled: Boolean = getConf(SQLConf.HADOOP_LINE_RECORD_READER_ENABLED)
 
   def shuffleConsolidationEnabled: Boolean = getConf(SQLConf.ENABLE_SHUFFLE_CONSOLIDATION)
+
+  def shuffleConsolidationSizeThreshold: Long =
+    getConf(SQLConf.SHUFFLE_CONSOLIDATION_SIZE_THRESHOLD)
 
   /** ********************** SQLConf functionality methods ************ */
 
