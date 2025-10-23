@@ -36,8 +36,9 @@ object AddConsolidationShuffle extends Rule[SparkPlan] {
         ShuffleExchangeExec(PassThroughPartitioning(part), plan,
           origin)
       case p: ShuffleQueryStageExec
-        if !p.shuffle.outputPartitioning.isInstanceOf[PassThroughPartitioning] =>
-        // Adaptive
+        if !p.shuffle.outputPartitioning.isInstanceOf[PassThroughPartitioning] &&
+          p.getRuntimeStatistics.sizeInBytes > SQLConf.get.shuffleConsolidationSizeThreshold =>
+        // Adaptive - only add consolidation shuffle if size > threshold
         ShuffleExchangeExec(PassThroughPartitioning(p.outputPartitioning), p,
           ENSURE_REQUIREMENTS)
     }
