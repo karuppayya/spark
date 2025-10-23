@@ -40,7 +40,7 @@ import org.apache.spark.internal.config._
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEndpointRef, RpcEnv}
 import org.apache.spark.scheduler.{MapStatus, MergeStatus, ShuffleOutputStatus}
-import org.apache.spark.shuffle.{MetadataFetchFailedException, ShuffleDependencyRegistry}
+import org.apache.spark.shuffle.MetadataFetchFailedException
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId, ShuffleMergedBlockId}
 import org.apache.spark.util._
 import org.apache.spark.util.ArrayImplicits._
@@ -156,16 +156,6 @@ private class ShuffleStatus(
   private[this] var shufflePushMergerLocations: Seq[BlockManagerId] = Seq.empty
 
   /**
-   * Counters tracking the number of non-empty partitions for each reducer.
-   * This provides O(1) access to the count of non-empty partitions per reducer.
-   */
-  private[this] val _nonEmptyPartitionCounts: Array[Int] = if (numReducers > 0) {
-    new Array[Int](numReducers)
-  } else {
-    Array.empty[Int]
-  }
-
-  /**
    * Mapping from a mapId to the mapIndex, this is required to reduce the searching overhead within
    * the function updateMapOutput(mapId, bmAddress).
    *
@@ -184,14 +174,8 @@ private class ShuffleStatus(
     if (currentMapStatus == null) {
       _numAvailableMapOutputs += 1
       invalidateSerializedMapOutputStatusCache()
-      // Update non-empty partition counts for all reducers
-      updateNonEmptyPartitionCounts(status, increment = true)
     } else {
       mapIdToMapIndex.remove(currentMapStatus.mapId)
-      // Update non-empty partition counts for all reducers
-      updateNonEmptyPartitionCounts(currentMapStatus, increment = false)
-      // Increment counts for the new status
-      updateNonEmptyPartitionCounts(status, increment = true)
     }
     logDebug(s"Checksum of map output for task ${status.mapId} is ${status.checksumValue}")
 
@@ -239,8 +223,6 @@ private class ShuffleStatus(
             mapStatuses(index) = mapStatus
             _numAvailableMapOutputs += 1
             invalidateSerializedMapOutputStatusCache()
-            // Update non-empty partition counts for the recovered status
-            updateNonEmptyPartitionCounts(mapStatus, increment = true)
             mapStatusesDeleted(index) = null
             logInfo(log"Recover ${MDC(MAP_ID, mapStatus.mapId)}" +
               log" ${MDC(BLOCK_MANAGER_ID, mapStatus.location)}")
@@ -270,36 +252,6 @@ private class ShuffleStatus(
       mapStatusesDeleted(mapIndex) = currentMapStatus
       mapStatuses(mapIndex) = null
       invalidateSerializedMapOutputStatusCache()
-      // Update non-empty partition counts for the removed status
-      updateNonEmptyPartitionCounts(currentMapStatus, increment = false)
-    }
-  }
-
-  /**
-   * Get the number of non-empty partitions for a given reducer ID.
-   * This provides O(1) access to the count.
-   *
-   * @param reducerId the reducer ID to get the count for
-   * @return the number of non-empty partitions for the given reducer
-   */
-  def getNonEmptyPartitionCountForReducer(reducerId: Int): ShuffleStatusSummary = withReadLock {
-    ShuffleStatusSummary(_numAvailableMapOutputs == mapStatuses.length,
-      _nonEmptyPartitionCounts(reducerId))
-  }
-
-
-  /**
-   * Helper method to update non-empty partition counts when adding or removing map outputs.
-   * This maintains the counters efficiently without iterating through all reducers.
-   */
-  private def updateNonEmptyPartitionCounts(status: MapStatus, increment: Boolean): Unit = {
-    if (numReducers > 0) {
-      val delta = if (increment) 1 else -1
-      for (reducerId <- 0 until numReducers) {
-        if (status.getSizeForBlock(reducerId) > 0) {
-          _nonEmptyPartitionCounts(reducerId) += delta
-        }
-      }
     }
   }
 
@@ -549,24 +501,16 @@ private[spark] case class GetMapAndMergeResultStatuses(shuffleId: Int)
 private[spark] case class GetShufflePushMergerLocations(shuffleId: Int)
   extends MapOutputTrackerMessage
 private[spark] case object StopMapOutputTracker extends MapOutputTrackerMessage
-private[spark] case class GetAvailableOutputPartitionsCount(shuffleId: Int, reduceId: Int)
-  extends MapOutputTrackerMessage
 
 private[spark] sealed trait MapOutputTrackerMasterMessage
 private[spark] case class GetMapOutputMessage(shuffleId: Int,
-context: RpcCallContext) extends MapOutputTrackerMasterMessage
+  context: RpcCallContext) extends MapOutputTrackerMasterMessage
 private[spark] case class GetMapAndMergeOutputMessage(shuffleId: Int,
   context: RpcCallContext) extends MapOutputTrackerMasterMessage
 private[spark] case class GetShufflePushMergersMessage(shuffleId: Int,
   context: RpcCallContext) extends MapOutputTrackerMasterMessage
-private[spark] case class GetAvailableOutputPartitionsCountMessage(shuffleId: Int, reduceId: Int,
-  context: RpcCallContext) extends MapOutputTrackerMasterMessage
-
 private[spark] case class MapSizesByExecutorId(
   iter: Iterator[(BlockManagerId, collection.Seq[(BlockId, Long, Int)])], enableBatchFetch: Boolean)
-private[spark] case class ShuffleStatusSummary(allMapOutputAvailable: Boolean,
-  totalNonEmptyBlockForReducer: Int)
-
 
 /** RpcEndpoint class for MapOutputTrackerMaster */
 private[spark] class MapOutputTrackerMasterEndpoint(
@@ -594,10 +538,6 @@ private[spark] class MapOutputTrackerMasterEndpoint(
     case GetShufflePushMergerLocations(shuffleId: Int) =>
       logInfoMsg(log"shuffle push merger", shuffleId, context)
       tracker.post(GetShufflePushMergersMessage(shuffleId, context))
-
-    case GetAvailableOutputPartitionsCount(shuffleId: Int, reduceId: Int) =>
-      logInfoMsg(log"Get shuffle output count", shuffleId, context)
-      tracker.post(GetAvailableOutputPartitionsCountMessage(shuffleId, reduceId, context))
 
     case StopMapOutputTracker =>
       logInfo("MapOutputTrackerMasterEndpoint stopped!")
@@ -753,8 +693,6 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
    */
   def unregisterShuffle(shuffleId: Int): Unit
 
-  def getNumAvailableOutputsForShuffleAndReduce(shuffleId: Int, reduceId: Int): ShuffleStatusSummary
-
   def stop(): Unit = {}
 }
 
@@ -876,8 +814,6 @@ private[spark] class MapOutputTrackerMaster(
                   s" $shuffleId to ${context.senderAddress.hostPort}")
                 context.reply(shuffleStatuses.get(shuffleId).map(_.getShufflePushMergerLocations)
                   .getOrElse(Seq.empty[BlockManagerId]))
-              case GetAvailableOutputPartitionsCountMessage(shuffleId, reduceId, context) =>
-                context.reply(getNumAvailableOutputsForShuffleAndReduce(shuffleId, reduceId))
             }
           } catch {
             case NonFatal(e) => logError(log"${MDC(ERROR, e.getMessage)}", e)
@@ -897,23 +833,13 @@ private[spark] class MapOutputTrackerMaster(
     shuffleStatuses.valuesIterator.count(_.hasCachedSerializedBroadcast)
   }
 
-  override def getNumAvailableOutputsForShuffleAndReduce(shuffleId: Int,
-     reduceId: Int): ShuffleStatusSummary = {
-    shuffleStatuses.get(shuffleId) match {
-      case Some(status) =>
-        status.getNonEmptyPartitionCountForReducer(reduceId)
-      case _ =>
-        ShuffleStatusSummary(allMapOutputAvailable = false, -1)
-    }
-  }
-
   def registerShuffle(shuffleId: Int, numMaps: Int, numReduces: Int): Unit = {
     if (pushBasedShuffleEnabled) {
       if (shuffleStatuses.put(shuffleId, new ShuffleStatus(numMaps, numReduces)).isDefined) {
         throw new IllegalArgumentException("Shuffle ID " + shuffleId + " registered twice")
       }
     } else {
-      if (shuffleStatuses.put(shuffleId, new ShuffleStatus(numMaps, numReduces)).isDefined) {
+      if (shuffleStatuses.put(shuffleId, new ShuffleStatus(numMaps)).isDefined) {
         throw new IllegalArgumentException("Shuffle ID " + shuffleId + " registered twice")
       }
     }
@@ -1517,21 +1443,16 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
       conf: SparkConf,
       canFetchMergeResult: Boolean): (Array[MapStatus], Array[MergeStatus]) = {
     if (canFetchMergeResult) {
-      // force fetch if remote shuffle storage is enabled
-      val isRemote = ShuffleDependencyRegistry.getShuffleDependency(shuffleId)
-        .exists(_.useRemoteShuffleStorage)
       val mapOutputStatuses = mapStatuses.get(shuffleId).orNull
       val mergeOutputStatuses = mergeStatuses.get(shuffleId).orNull
 
-      if (mapOutputStatuses == null || mergeOutputStatuses == null || isRemote) {
+      if (mapOutputStatuses == null || mergeOutputStatuses == null) {
         logInfo(log"Don't have map/merge outputs for" +
           log" shuffle ${MDC(SHUFFLE_ID, shuffleId)}, fetching them")
         val startTimeNs = System.nanoTime()
         fetchingLock.withLock(shuffleId) {
-          // For remote shuffle storage, always fetch fresh statuses to ensure we have
-          // the most up-to-date information about block locations
-          var fetchedMapStatuses = if (isRemote) null else mapStatuses.get(shuffleId).orNull
-          var fetchedMergeStatuses = if (isRemote) null else mergeStatuses.get(shuffleId).orNull
+          var fetchedMapStatuses = mapStatuses.get(shuffleId).orNull
+          var fetchedMergeStatuses = mergeStatuses.get(shuffleId).orNull
           if (fetchedMapStatuses == null || fetchedMergeStatuses == null) {
             logInfo(log"Doing the fetch; tracker endpoint = " +
               log"${MDC(RPC_ENDPOINT_REF, trackerEndpoint)}")
@@ -1560,18 +1481,13 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
         (mapOutputStatuses, mergeOutputStatuses)
       }
     } else {
-      // force fetch if remote shuffle storage is enabled
-      val isRemote = ShuffleDependencyRegistry.getShuffleDependency(shuffleId)
-        .exists(_.useRemoteShuffleStorage)
       val statuses = mapStatuses.get(shuffleId).orNull
-      if (statuses == null || isRemote) {
+      if (statuses == null) {
         logInfo(log"Don't have map outputs for shuffle ${MDC(SHUFFLE_ID, shuffleId)}," +
           log" fetching them")
         val startTimeNs = System.nanoTime()
         fetchingLock.withLock(shuffleId) {
-          // For remote shuffle storage, always fetch fresh map statuses to ensure we have
-          // the most up-to-date information about block locations
-          var fetchedStatuses = if (isRemote) null else mapStatuses.get(shuffleId).orNull
+          var fetchedStatuses = mapStatuses.get(shuffleId).orNull
           if (fetchedStatuses == null) {
             logInfo(log"Doing the fetch; tracker endpoint =" +
               log" ${MDC(RPC_ENDPOINT_REF, trackerEndpoint)}")
@@ -1620,11 +1536,6 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
         shufflePushMergerLocations.clear()
       }
     }
-  }
-
-  override def getNumAvailableOutputsForShuffleAndReduce(shuffleId: Int, reduceId: Int)
-  : ShuffleStatusSummary = {
-    askTracker[ShuffleStatusSummary](GetAvailableOutputPartitionsCount(shuffleId, reduceId))
   }
 }
 
@@ -1794,10 +1705,7 @@ private[spark] object MapOutputTracker extends Logging {
 
       // Add location for the mapper shuffle partition blocks
       for ((mapStatus, mapIndex) <- mapStatuses.iterator.zipWithIndex) {
-        if (ShuffleDependencyRegistry.getShuffleDependency(shuffleId)
-          .exists(_.useRemoteShuffleStorage)) {
-          validateStatus(mapStatus, shuffleId, startPartition)
-        }
+        validateStatus(mapStatus, shuffleId, startPartition)
         for (partId <- startPartition until endPartition) {
           // For the "holes" in this pre-merged shuffle partition, i.e., unmerged mapper
           // shuffle partition blocks, fetch the original map produced shuffle partition blocks
@@ -1815,12 +1723,9 @@ private[spark] object MapOutputTracker extends Logging {
     } else {
       val iter = mapStatuses.iterator.zipWithIndex
       for ((status, mapIndex) <- iter.slice(startMapIndex, endMapIndex)) {
-        if (ShuffleDependencyRegistry.getShuffleDependency(shuffleId)
-          .exists(_.useRemoteShuffleStorage)) {
-          validateStatus(status, shuffleId, startPartition)
-        }
+        validateStatus(status, shuffleId, startPartition)
         for (part <- startPartition until endPartition) {
-          val size = Option(status).map(_.getSizeForBlock(part)).getOrElse(0L)
+          val size = status.getSizeForBlock(part)
           if (size != 0) {
             splitsByAddress.getOrElseUpdate(status.location, ListBuffer()) +=
               ((ShuffleBlockId(shuffleId, status.mapId, part), size, mapIndex))
