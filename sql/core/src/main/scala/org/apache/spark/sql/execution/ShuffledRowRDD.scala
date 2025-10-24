@@ -21,7 +21,6 @@ import java.util.Arrays
 
 import org.apache.spark._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.shuffle.ShuffleDependencyRegistry
 import org.apache.spark.shuffle.sort.SortShuffleManager
 import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLShuffleReadMetricsReporter}
@@ -187,9 +186,6 @@ class ShuffledRowRDD(
   }
 
   override def compute(split: Partition, context: TaskContext): Iterator[InternalRow] = {
-    // Register the ShuffleDependency in the registry
-    ShuffleDependencyRegistry.registerShuffleDependency(dependency)
-
     val tempMetrics = context.taskMetrics().createTempShuffleReadMetrics()
     // `SQLShuffleReadMetricsReporter` will update its own metrics for SQL exchange operator,
     // as well as the `tempMetrics` for basic shuffle metrics.

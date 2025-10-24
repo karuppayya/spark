@@ -68,7 +68,7 @@ private[spark] object RemoteShuffleStorage extends Logging {
 
   val blockManagerId = "remoteShuffleBlockStore"
   lazy val hadoopConf: Configuration = SparkHadoopUtil.get.newConfiguration(SparkEnv.get.conf)
-  val appId: String = SparkEnv.get.conf.getAppId
+  lazy val appId: String = SparkEnv.get.conf.getAppId
   lazy val remoteStoragePath = new Path(SparkEnv.get.conf.get(SHUFFLE_REMOTE_STORAGE_PATH).get)
   lazy val remoteFileSystem: FileSystem = FileSystem.get(remoteStoragePath.toUri, hadoopConf)
 
@@ -85,7 +85,7 @@ private[spark] object RemoteShuffleStorage extends Logging {
 
   /** Clean up the generated remote shuffle location for this app. */
   def cleanUp(conf: SparkConf, hadoopConf: Configuration): Unit = {
-    if (conf.contains("spark.app.id")) {
+    if (conf.contains("spark.app.id") && conf.contains(SHUFFLE_REMOTE_STORAGE_PATH)) {
       val shuffleRemotePath =
         new Path(conf.get(SHUFFLE_REMOTE_STORAGE_PATH).get, conf.getAppId)
       val remoteUri = shuffleRemotePath.toUri
@@ -105,13 +105,15 @@ private[spark] object RemoteShuffleStorage extends Logging {
    * Read a ManagedBuffer.
    */
   def read(blockIds: Seq[BlockId], listener: BlockFetchingListener): Unit = {
-    assert(blockIds.size == 1)
-    val blockId = blockIds.head
-    logInfo(log"Read ${MDC(BLOCK_ID, blockId)}")
-
-    listener.onBlockFetchSuccess(blockId.name,
-      new FileSystemManagedBuffer(getPath(blockId), hadoopConf,
-        SparkEnv.get.conf.getSizeAsMb(REMOTE_SHUFFLE_BUFFER_SIZE.key, "64M").toInt))
+    blockIds.foreach { blockId =>
+      // Use blockId.name to ensure the block name matches what's in remainingBlocks
+      // For batch blocks, this will be the batch name (e.g., "shuffle_0_0_5_8")
+      // For regular blocks, this will be the individual block name (e.g., "shuffle_0_0_5")
+      logInfo(log"Read ${MDC(BLOCK_ID, blockId)}")
+      listener.onBlockFetchSuccess(blockId.name,
+        new FileSystemManagedBuffer(getPath(blockId), hadoopConf,
+          SparkEnv.get.conf.getSizeAsMb(REMOTE_SHUFFLE_BUFFER_SIZE.key, "64M").toInt))
+    }
   }
 
   def getPath(blockId: BlockId): Path = {
@@ -120,10 +122,12 @@ private[spark] object RemoteShuffleStorage extends Logging {
         (shuffleId, ShuffleDataBlockId(shuffleId, mapId, reduceId).name)
       case shuffleDataBlock@ ShuffleDataBlockId(shuffleId, _, _) =>
         (shuffleId, shuffleDataBlock.name)
+      case ShuffleBlockBatchId(shuffleId, mapId, startReduceId, endReduceId) =>
+        // For batches, we use the startReduceId to identify the block file.
+        // The batch range [startReduceId, endReduceId) will be read from the same file.
+        (shuffleId, ShuffleDataBlockId(shuffleId, mapId, startReduceId).name)
       case shuffleCheckSumBlock@ ShuffleChecksumBlockId(shuffleId, _, _) =>
         (shuffleId, shuffleCheckSumBlock.name)
-      case shuffleIndexBlock@ ShuffleIndexBlockId(shuffleId, _, _) =>
-        (shuffleId, shuffleIndexBlock.name)
       case _ => throw new SparkException(s"Unsupported block id type: ${blockId.name}")
     }
     val hash = JavaUtils.nonNegativeHash(name)

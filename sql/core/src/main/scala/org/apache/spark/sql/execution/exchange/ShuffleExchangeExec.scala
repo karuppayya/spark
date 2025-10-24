@@ -182,6 +182,11 @@ case object REBALANCE_PARTITIONS_BY_COL extends ShuffleOrigin
 // change it.
 case object REQUIRED_BY_STATEFUL_OPERATOR extends ShuffleOrigin
 
+// Indicates that the shuffle operator was added by the consolidation shuffle optimization to
+// consolidate shuffle data from earlier stages and upload it to remote storage.
+case object SHUFFLE_CONSOLIDATION extends ShuffleOrigin
+
+
 /**
  * Performs a shuffle that will result in the desired partitioning.
  */
@@ -202,7 +207,7 @@ case class ShuffleExchangeExec(
   ) ++ readMetrics ++ writeMetrics
 
   override def nodeName: String = {
-    if (shuffleDependency.useRemoteShuffleStorage) {
+    if (outputPartitioning.isInstanceOf[PassThroughPartitioning]) {
       "Consolidation exchange"
     } else {
       "Exchange"
@@ -264,6 +269,7 @@ case class ShuffleExchangeExec(
     // The ShuffleRowRDD will be cached in SparkPlan.executeRDD and reused if this plan is used by
     // multiple plans.
     new ShuffledRowRDD(shuffleDependency, readMetrics)
+
   }
 
   override protected def withNewChildInternal(newChild: SparkPlan): ShuffleExchangeExec =
@@ -506,7 +512,7 @@ object ShuffleExchangeExec {
         shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
         rowBasedChecksums = UnsafeRowChecksum.createUnsafeRowChecksums(checksumSize),
         checksumMismatchFullRetryEnabled = SQLConf.get.shuffleChecksumMismatchFullRetryEnabled,
-        useRemoteShuffleStorage = newPartitioning.isInstanceOf[PassThroughPartitioning] )
+        useRemoteShuffleStorage = newPartitioning.isInstanceOf[PassThroughPartitioning])
 
     dependency
   }

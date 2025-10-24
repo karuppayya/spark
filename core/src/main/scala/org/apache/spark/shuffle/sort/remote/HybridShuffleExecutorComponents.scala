@@ -19,8 +19,7 @@ package org.apache.spark.shuffle.sort.remote
 
 import java.util.Optional
 
-import org.apache.spark.SparkConf
-import org.apache.spark.shuffle.ShuffleDependencyRegistry
+import org.apache.spark.{SparkConf, TaskContext}
 import org.apache.spark.shuffle.api.{ShuffleExecutorComponents, ShuffleMapOutputWriter, SingleSpillShuffleMapOutputWriter}
 import org.apache.spark.shuffle.sort.io.LocalDiskShuffleExecutorComponents
 
@@ -37,8 +36,8 @@ class HybridShuffleExecutorComponents(sparkConf: SparkConf,
       shuffleId: Int,
       mapTaskId: Long,
       numPartitions: Int): ShuffleMapOutputWriter = {
-    val isRemote = ShuffleDependencyRegistry.getShuffleDependency(shuffleId)
-      .exists(_.useRemoteShuffleStorage)
+    val isRemote = TaskContext.get().getLocalProperties
+      .getOrDefault("consolidation.write", "false").toString.toBoolean
     if (isRemote) {
       new RemoteShuffleMapOutputWriter(sparkConf, shuffleId, mapTaskId, numPartitions)
     } else {

@@ -222,7 +222,7 @@ class ShuffleBlockFetcherIteratorSuite extends SparkFunSuite {
       checksumEnabled,
       checksumAlgorithm,
       shuffleMetrics.getOrElse(tContext.taskMetrics().createTempShuffleReadMetrics()),
-      doBatchFetch, null)
+      doBatchFetch)
   }
   // scalastyle:on argcount
 

@@ -32,12 +32,27 @@ private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
     val priority2 = s2.priority
     var res = math.signum(priority1 - priority2)
     if (res == 0) {
+      val stageId1 = s1.stageId
+      val stageId2 = s2.stageId
+      res = math.signum(stageId1 - stageId2)
+    }
+    res < 0
+  }
+}
+
+private[spark] class WeightedFIFOSchedulingAlgorithm extends SchedulingAlgorithm {
+  override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {
+    val priority1 = s1.priority
+    val priority2 = s2.priority
+    var res = math.signum(priority1 - priority2)
+    if (res == 0) {
       if (s1.weight == s2.weight) {
         val stageId1 = s1.stageId
         val stageId2 = s2.stageId
         res = math.signum(stageId1 - stageId2)
       } else {
-        res = math.signum(s1.weight - s2.weight)
+        // Higher the weight, earlier should it run(unlike priority)
+        res = math.signum(s2.weight - s1.weight)
       }
     }
     res < 0
