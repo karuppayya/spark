@@ -1757,7 +1757,9 @@ private[spark] class DAGScheduler(
       val shuffleId = stage match {
         case s: ShuffleMapStage =>
           // hack to prioritize remote shuffle writes
-          properties.setProperty("remote", s.shuffleDep.useRemoteShuffleStorage.toString)
+          if (properties != null) {
+            properties.setProperty("remote", s.shuffleDep.useRemoteShuffleStorage.toString)
+          }
           Some(s.shuffleDep.shuffleId)
         case _: ResultStage => None
       }

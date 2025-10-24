@@ -81,7 +81,7 @@ object FakeTask {
     val tasks = Array.tabulate[Task[_]](numTasks) { i =>
       new FakeTask(stageId, i, if (prefLocs.size != 0) prefLocs(i) else Nil)
     }
-    new TaskSet(tasks, stageId, stageAttemptId, priority = priority, null, rpId, None)
+    new TaskSet(tasks, stageId, stageAttemptId, priority = priority, new Properties(), rpId, None)
   }
 
   def createShuffleMapTaskSet(

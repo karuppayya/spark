@@ -68,7 +68,7 @@ private[spark] object RemoteShuffleStorage extends Logging {
 
   val blockManagerId = "remoteShuffleBlockStore"
   lazy val hadoopConf: Configuration = SparkHadoopUtil.get.newConfiguration(SparkEnv.get.conf)
-  val appId: String = SparkEnv.get.conf.getAppId
+  lazy val appId: String = SparkEnv.get.conf.getAppId
   lazy val remoteStoragePath = new Path(SparkEnv.get.conf.get(SHUFFLE_REMOTE_STORAGE_PATH).get)
   lazy val remoteFileSystem: FileSystem = FileSystem.get(remoteStoragePath.toUri, hadoopConf)
 
