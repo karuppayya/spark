@@ -30,26 +30,22 @@ object AddConsolidationShuffle extends Rule[SparkPlan] {
       return plan
     }
     plan transformUp {
-      case plan @ ShuffleExchangeExec(part, _, origin, _) =>
+      case plan@ShuffleExchangeExec(part, _, origin, _) =>
         // Non-adaptive: always add consolidation exchange for shuffle exchanges
         ShuffleExchangeExec(PassThroughPartitioning(part), plan, origin)
       case p: ShuffleQueryStageExec
-        if !p.shuffle.outputPartitioning.isInstanceOf[PassThroughPartitioning] =>
-        // Adaptive: only add consolidation exchange if the stage is both:
-        // 1. Large enough to benefit from consolidation (exceeds consolidation threshold)
-        // 2. Too large to be broadcast (exceeds broadcast threshold)
-        // This ensures we don't consolidate stages that might be converted to broadcast joins,
-        // which would prevent the SortMergeJoin -> BroadcastHashJoin conversion from happening.
+        if !p.shuffle.outputPartitioning.isInstanceOf[PassThroughPartitioning] &&
+          p.isMaterialized =>
+        // Adaptive
+        // add consolidation exchange only if:
+        // 1. Stage is materialized
+        // 2. Size exceeds consolidation threshold
         val size = p.getRuntimeStatistics.sizeInBytes
-        val broadcastThreshold = SQLConf.get.getConf(SQLConf.ADAPTIVE_AUTO_BROADCASTJOIN_THRESHOLD)
-          .getOrElse(SQLConf.get.autoBroadcastJoinThreshold)
         val consolidationThreshold = SQLConf.get.shuffleConsolidationSizeThreshold
-        if (size > consolidationThreshold && size > broadcastThreshold) {
+        if (size > consolidationThreshold) {
           ShuffleExchangeExec(PassThroughPartitioning(p.outputPartitioning), p,
             SHUFFLE_CONSOLIDATION)
         } else {
-          // Don't consolidate - stage might be small enough to be broadcast,
-          // and consolidation would interfere with broadcast join conversion
           p
         }
     }

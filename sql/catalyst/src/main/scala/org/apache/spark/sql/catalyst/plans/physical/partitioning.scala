@@ -625,7 +625,7 @@ case class PassThroughPartitioning(childPartitioning: Partitioning) extends Part
   /**
    * Always returns true, satisfying any distribution.
    */
-  override def satisfies0(required: Distribution): Boolean = true
+  override def satisfies0(required: Distribution): Boolean = childPartitioning.satisfies(required)
 
   override def createShuffleSpec(distribution: ClusteredDistribution): ShuffleSpec = {
     childPartitioning.createShuffleSpec(distribution)

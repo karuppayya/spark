@@ -44,7 +44,7 @@ case class CoalesceShufflePartitions(session: SparkSession) extends AQEShuffleRe
   }
 
   override def apply(plan: SparkPlan): SparkPlan = {
-    if (!conf.coalesceShufflePartitionsEnabled) {
+    if (!conf.coalesceShufflePartitionsEnabled || conf.shuffleConsolidationEnabled) {
       return plan
     }
 
