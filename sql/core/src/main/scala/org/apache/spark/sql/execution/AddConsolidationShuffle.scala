@@ -32,7 +32,7 @@ object AddConsolidationShuffle extends Rule[SparkPlan] {
     plan transformUp {
       case plan@ShuffleExchangeExec(part, _, origin, _) =>
         // Non-adaptive: always add consolidation exchange for shuffle exchanges
-        ShuffleExchangeExec(PassThroughPartitioning(part), plan, origin)
+        ShuffleExchangeExec(PassThroughPartitioning(part), plan, SHUFFLE_CONSOLIDATION)
       case p: ShuffleQueryStageExec
         if !p.shuffle.outputPartitioning.isInstanceOf[PassThroughPartitioning] &&
           p.isMaterialized =>

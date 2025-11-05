@@ -3812,7 +3812,7 @@ object SQLConf {
         "consolidation stage added. This helps avoid overhead for small shuffles.")
       .version("4.1.0")
       .bytesConf(ByteUnit.BYTE)
-      .createWithDefault(100 * 1024 * 1024)
+      .createWithDefaultString("100MB")
 
   val SORT_MERGE_JOIN_EXEC_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sortMergeJoinExec.buffer.in.memory.threshold")
