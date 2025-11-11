@@ -621,7 +621,8 @@ case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
  * This is useful when you want to ensure that a partitioning will always satisfy a distribution
  * regardless of the distribution's requirements.
  */
-case class PassThroughPartitioning(childPartitioning: Partitioning) extends Partitioning {
+case class PassThroughPartitioning(childPartitioning: Partitioning)
+    extends Expression with Partitioning with Unevaluable {
   /**
    * Always returns true, satisfying any distribution.
    */
@@ -633,6 +634,33 @@ case class PassThroughPartitioning(childPartitioning: Partitioning) extends Part
 
   /** Returns the number of partitions that the data is split across */
   override val numPartitions: Int = childPartitioning.numPartitions
+
+  // Expression interface implementation
+  override def children: Seq[Expression] = childPartitioning match {
+    case e: Expression => e.children
+    case _ => Nil
+  }
+
+  override def nullable: Boolean = false
+  override def dataType: DataType = IntegerType
+
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): PassThroughPartitioning = {
+    childPartitioning match {
+      case e: Expression =>
+        copy(childPartitioning = e.withNewChildren(newChildren).asInstanceOf[Partitioning])
+      case _ =>
+        this
+    }
+  }
+
+  override lazy val canonicalized: Expression = {
+    val canonicalizedChild = childPartitioning match {
+      case e: Expression => e.canonicalized.asInstanceOf[Partitioning]
+      case other => other
+    }
+    copy(childPartitioning = canonicalizedChild)
+  }
 }
 
 

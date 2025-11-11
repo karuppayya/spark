@@ -18,11 +18,10 @@
 package org.apache.spark.sql.execution.reuse
 
 import scala.collection.mutable
-
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.execution.{BaseSubqueryExec, ExecSubqueryExpression, ReusedSubqueryExec, SparkPlan}
-import org.apache.spark.sql.execution.exchange.{Exchange, ReusedExchangeExec}
+import org.apache.spark.sql.execution.exchange.{Exchange, ReusedExchangeExec, SHUFFLE_CONSOLIDATION, ShuffleExchangeExec}
 
 /**
  * Find out duplicated exchanges and subqueries in the whole spark plan including subqueries, then
@@ -42,14 +41,14 @@ case object ReuseExchangeAndSubquery extends Rule[SparkPlan] {
 
       def reuse(plan: SparkPlan): SparkPlan = {
         plan.transformUpWithPruning(_.containsAnyPattern(EXCHANGE, PLAN_EXPRESSION)) {
-          case exchange: Exchange if conf.exchangeReuseEnabled =>
+          case exchange: Exchange if conf.exchangeReuseEnabled &&
+            !conf.shuffleConsolidationEnabled =>
             val cachedExchange = exchanges.getOrElseUpdate(exchange.canonicalized, exchange)
             if (cachedExchange.ne(exchange)) {
               ReusedExchangeExec(exchange.output, cachedExchange)
             } else {
               cachedExchange
             }
-
           case other =>
             other.transformExpressionsUpWithPruning(_.containsPattern(PLAN_EXPRESSION)) {
               case sub: ExecSubqueryExpression =>

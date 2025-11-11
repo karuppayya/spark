@@ -36,8 +36,7 @@ object AddConsolidationShuffle extends Rule[SparkPlan] {
       case p: ShuffleQueryStageExec
         if !p.shuffle.outputPartitioning.isInstanceOf[PassThroughPartitioning] &&
           p.isMaterialized =>
-        // Adaptive
-        // add consolidation exchange only if:
+        // Add consolidation exchange only if:
         // 1. Stage is materialized
         // 2. Size exceeds consolidation threshold
         val size = p.getRuntimeStatistics.sizeInBytes
