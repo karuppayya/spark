@@ -18,10 +18,11 @@
 package org.apache.spark.sql.execution.reuse
 
 import scala.collection.mutable
+
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.trees.TreePattern._
 import org.apache.spark.sql.execution.{BaseSubqueryExec, ExecSubqueryExpression, ReusedSubqueryExec, SparkPlan}
-import org.apache.spark.sql.execution.exchange.{Exchange, ReusedExchangeExec, SHUFFLE_CONSOLIDATION, ShuffleExchangeExec}
+import org.apache.spark.sql.execution.exchange.{Exchange, ReusedExchangeExec}
 
 /**
  * Find out duplicated exchanges and subqueries in the whole spark plan including subqueries, then

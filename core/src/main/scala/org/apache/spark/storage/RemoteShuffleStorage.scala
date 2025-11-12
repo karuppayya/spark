@@ -76,7 +76,8 @@ private[spark] object RemoteShuffleStorage extends Logging {
   val BLOCK_MANAGER_ID: BlockManagerId = BlockManagerId(blockManagerId, "remote", 7337)
 
   /** Register the remote shuffle block manager and its RPC endpoint. */
-  def registerBlockManager(master: BlockManagerMaster, conf: SparkConf): Unit = {
+  def registerBlockManagerifNeeded(master: BlockManagerMaster, conf: SparkConf,
+                                   hadoopConf: Configuration): Unit = {
     if (conf.get(SHUFFLE_REMOTE_STORAGE_PATH).isDefined) {
       master.registerBlockManager(
         BLOCK_MANAGER_ID, Array.empty[String], 0, 0, new RemoteStorageRpcEndpointRef(conf))
