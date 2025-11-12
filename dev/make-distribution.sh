@@ -180,8 +180,9 @@ else
   # Store the command as an array because $MVN variable might have spaces in it.
   # Normal quoting tricks don't work.
   # See: http://mywiki.wooledge.org/BashFAQ/050
-  BUILD_COMMAND=("$MVN" clean package \
+  BUILD_COMMAND=("$MVN" -T 4 package \
       -DskipTests \
+      -pl assembly \
       -Dmaven.javadoc.skip=true \
       -Dmaven.scaladoc.skip=true \
       -Dmaven.source.skip \
@@ -288,9 +289,11 @@ fi
 # Copy other things
 mkdir "$DISTDIR/conf"
 cp "$SPARK_HOME"/conf/*.template "$DISTDIR/conf"
+cp "$SPARK_HOME"/conf/log4j2.properties "$DISTDIR/conf"
 cp "$SPARK_HOME/README.md" "$DISTDIR"
 cp -r "$SPARK_HOME/bin" "$DISTDIR"
 cp -r "$SPARK_HOME/python" "$DISTDIR"
+cp -r $SPARK_HOME/perf/* "$DISTDIR/jars"
 
 # Remove the python distribution from dist/ if we built it
 if [ "$MAKE_PIP" == "true" ]; then
@@ -322,9 +325,11 @@ if [ "$MAKE_TGZ" == "true" ]; then
     rm -rf "$TARDIR"
     cp -r "$DISTDIR" "$TARDIR"
     # Set the Spark Connect system variable in these scripts to enable it by default.
+    awk 'NR==1{print; print "export SPARK_CONNECT_BEELINE=${SPARK_CONNECT_BEELINE:-1}"; next} {print}' "$TARDIR/bin/beeline" > tmp && cat tmp > "$TARDIR/bin/beeline"
     awk 'NR==1{print; print "export SPARK_CONNECT_MODE=${SPARK_CONNECT_MODE:-1}"; next} {print}' "$TARDIR/bin/pyspark" > tmp && cat tmp > "$TARDIR/bin/pyspark"
     awk 'NR==1{print; print "export SPARK_CONNECT_MODE=${SPARK_CONNECT_MODE:-1}"; next} {print}' "$TARDIR/bin/spark-shell" > tmp && cat tmp > "$TARDIR/bin/spark-shell"
     awk 'NR==1{print; print "export SPARK_CONNECT_MODE=${SPARK_CONNECT_MODE:-1}"; next} {print}' "$TARDIR/bin/spark-submit" > tmp && cat tmp > "$TARDIR/bin/spark-submit"
+    awk 'NR==1{print; print "if [%SPARK_CONNECT_BEELINE%] == [] set SPARK_CONNECT_BEELINE=1"; next} {print}' "$TARDIR/bin/beeline.cmd" > tmp && cat tmp > "$TARDIR/bin/beeline.cmd"
     awk 'NR==1{print; print "if [%SPARK_CONNECT_MODE%] == [] set SPARK_CONNECT_MODE=1"; next} {print}' "$TARDIR/bin/pyspark2.cmd" > tmp && cat tmp > "$TARDIR/bin/pyspark2.cmd"
     awk 'NR==1{print; print "if [%SPARK_CONNECT_MODE%] == [] set SPARK_CONNECT_MODE=1"; next} {print}' "$TARDIR/bin/spark-shell2.cmd" > tmp && cat tmp > "$TARDIR/bin/spark-shell2.cmd"
     awk 'NR==1{print; print "if [%SPARK_CONNECT_MODE%] == [] set SPARK_CONNECT_MODE=1"; next} {print}' "$TARDIR/bin/spark-submit2.cmd" > tmp && cat tmp > "$TARDIR/bin/spark-submit2.cmd"

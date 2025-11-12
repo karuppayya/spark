@@ -189,7 +189,8 @@ case class OrderedDistribution(ordering: Seq[SortOrder]) extends Distribution {
  * Represents data where tuples are broadcasted to every node. It is quite common that the
  * entire set of tuples is transformed into different data structure.
  */
-case class BroadcastDistribution(mode: BroadcastMode) extends Distribution {
+case class
+BroadcastDistribution(mode: BroadcastMode) extends Distribution {
   override def requiredNumPartitions: Option[Int] = Some(1)
 
   override def createPartitioning(numPartitions: Int): Partitioning = {
@@ -616,6 +617,54 @@ case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
 }
 
 /**
+ * A partitioning that always satisfies any distribution.
+ * This is useful when you want to ensure that a partitioning will always satisfy a distribution
+ * regardless of the distribution's requirements.
+ */
+case class PassThroughPartitioning(childPartitioning: Partitioning)
+    extends Expression with Partitioning with Unevaluable {
+  /**
+   * Always returns true, satisfying any distribution.
+   */
+  override def satisfies0(required: Distribution): Boolean = childPartitioning.satisfies(required)
+
+  override def createShuffleSpec(distribution: ClusteredDistribution): ShuffleSpec = {
+    childPartitioning.createShuffleSpec(distribution)
+  }
+
+  /** Returns the number of partitions that the data is split across */
+  override val numPartitions: Int = childPartitioning.numPartitions
+
+  // Expression interface implementation
+  override def children: Seq[Expression] = childPartitioning match {
+    case e: Expression => e.children
+    case _ => Nil
+  }
+
+  override def nullable: Boolean = false
+  override def dataType: DataType = IntegerType
+
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): PassThroughPartitioning = {
+    childPartitioning match {
+      case e: Expression =>
+        copy(childPartitioning = e.withNewChildren(newChildren).asInstanceOf[Partitioning])
+      case _ =>
+        this
+    }
+  }
+
+  override lazy val canonicalized: Expression = {
+    val canonicalizedChild = childPartitioning match {
+      case e: Expression => e.canonicalized.asInstanceOf[Partitioning]
+      case other => other
+    }
+    copy(childPartitioning = canonicalizedChild)
+  }
+}
+
+
+/**
  * This is used in the scenario where an operator has multiple children (e.g., join) and one or more
  * of which have their own requirement regarding whether its data can be considered as
  * co-partitioned from others. This offers APIs for:
@@ -638,7 +687,10 @@ case class ShufflePartitionIdPassThrough(
     expr: DirectShufflePartitionID,
     numPartitions: Int) extends Expression with Partitioning with Unevaluable {
 
-  // TODO(SPARK-53401): Support Shuffle Spec in Direct Partition ID Pass Through
+  override def createShuffleSpec(distribution: ClusteredDistribution): ShuffleSpec = {
+    ShufflePartitionIdPassThroughSpec(this, distribution)
+  }
+
   def partitionIdExpression: Expression = Pmod(expr.child, Literal(numPartitions))
 
   def expressions: Seq[Expression] = expr :: Nil
@@ -964,6 +1016,51 @@ object KeyGroupedShuffleSpec {
     }.toArray
     InternalRowComparableWrapper(new GenericInternalRow(reducedRow), expressions)
   }
+}
+
+case class ShufflePartitionIdPassThroughSpec(
+    partitioning: ShufflePartitionIdPassThrough,
+    distribution: ClusteredDistribution) extends ShuffleSpec {
+
+  /**
+   * A sequence where each element is a set of positions of the partition key to the cluster
+   * keys. Similar to HashShuffleSpec, this maps the partitioning expression to positions
+   * in the distribution clustering keys.
+   */
+  lazy val keyPositions: mutable.BitSet = {
+    val distKeyToPos = mutable.Map.empty[Expression, mutable.BitSet]
+    distribution.clustering.zipWithIndex.foreach { case (distKey, distKeyPos) =>
+      distKeyToPos.getOrElseUpdate(distKey.canonicalized, mutable.BitSet.empty).add(distKeyPos)
+    }
+    distKeyToPos.getOrElse(partitioning.expr.child.canonicalized, mutable.BitSet.empty)
+  }
+
+  override def isCompatibleWith(other: ShuffleSpec): Boolean = other match {
+    case SinglePartitionShuffleSpec =>
+      partitioning.numPartitions == 1
+    case otherPassThroughSpec @ ShufflePartitionIdPassThroughSpec(
+        otherPartitioning, otherDistribution) =>
+      // As ShufflePartitionIdPassThrough only allows a single expression
+      // as the partitioning expression, we check compatibility as follows:
+      // 1. Same number of clustering expressions
+      // 2. Same number of partitions
+      // 3. each partitioning expression from both sides has overlapping positions in their
+      //    corresponding distributions.
+      distribution.clustering.length == otherDistribution.clustering.length &&
+      partitioning.numPartitions == otherPartitioning.numPartitions && {
+        val otherKeyPositions = otherPassThroughSpec.keyPositions
+        keyPositions.intersect(otherKeyPositions).nonEmpty
+      }
+    case ShuffleSpecCollection(specs) =>
+      specs.exists(isCompatibleWith)
+    case _ =>
+      false
+  }
+
+  // We don't support creating partitioning for ShufflePartitionIdPassThrough.
+  override def canCreatePartitioning: Boolean = false
+
+  override def numPartitions: Int = partitioning.numPartitions
 }
 
 case class ShuffleSpecCollection(specs: Seq[ShuffleSpec]) extends ShuffleSpec {
