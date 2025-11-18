@@ -2710,6 +2710,18 @@ object SQLConf {
       .checkValue(k => k >= 0, "Must be greater than or equal to 0")
       .createWithDefault(if (Utils.isTesting) 1 else 0)
 
+  val STATE_STORE_FORCE_SNAPSHOT_UPLOAD_ON_LAG =
+    buildConf("spark.sql.streaming.stateStore.forceSnapshotUploadOnLag")
+      .internal()
+      .doc(
+        "When enabled, state stores with lagging snapshot uploads will automatically trigger " +
+        "a snapshot on the next commit. Requires spark.sql.streaming.stateStore.coordinator" +
+        "ReportSnapshotUploadLag to be true."
+      )
+      .version("4.2.0")
+      .booleanConf
+      .createWithDefault(false)
+
   val STATEFUL_SHUFFLE_PARTITIONS_INTERNAL =
     buildConf("spark.sql.streaming.internal.stateStore.partitions")
       .doc("WARN: This config is used internally and is not intended to be user-facing. This " +
@@ -3794,6 +3806,26 @@ object SQLConf {
       .version("4.1.0")
       .fallbackConf(SHUFFLE_DEPENDENCY_FILE_CLEANUP_ENABLED)
 
+  val ENABLE_SHUFFLE_CONSOLIDATION =
+    buildConf("spark.sql.shuffle.consolidation.enabled")
+      .doc("When enabled, creates a consolidation shuffle stage that consolidates shuffle data " +
+        "from earlier stages and uploads it to remote storage. This " +
+        "consolidation stage uses PassThroughPartitioning to satisfy distribution requirements " +
+        "without changing the actual data partitioning. The remote storage upload can improve " +
+        "shuffle performance and enable better resource utilization in distributed environments.")
+      .version("4.1.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val SHUFFLE_CONSOLIDATION_SIZE_THRESHOLD =
+    buildConf("spark.sql.shuffle.consolidation.size.threshold")
+      .doc("Minimum shuffle size in bytes required to create a consolidation shuffle stage " +
+        "in adaptive execution. Only shuffles larger than this threshold will have a " +
+        "consolidation stage added. This helps avoid overhead for small shuffles.")
+      .version("4.1.0")
+      .bytesConf(ByteUnit.BYTE)
+      .createWithDefaultString("100MB")
+
   val SORT_MERGE_JOIN_EXEC_BUFFER_IN_MEMORY_THRESHOLD =
     buildConf("spark.sql.sortMergeJoinExec.buffer.in.memory.threshold")
       .internal()
@@ -3848,6 +3880,16 @@ object SQLConf {
     .version("2.3.0")
     .booleanConf
     .createWithDefault(false)
+
+  val SINGLE_CHARACTER_PIPE_OPERATOR_ENABLED =
+    buildConf("spark.sql.parser.singleCharacterPipeOperator.enabled")
+    .doc("When true, the single character pipe token '|' can be used as an alternative to '|>' " +
+      "for SQL pipe operators. When false, only '|>' is recognized as a pipe operator, and '|' " +
+      "is only used for bitwise OR operations. This provides syntax compatibility with other " +
+      "languages like Splunk SPL and Kusto that use '|' for pipe operations.")
+    .version("4.2.0")
+    .booleanConf
+    .createWithDefault(true)
 
   val TVF_ALLOW_MULTIPLE_TABLE_ARGUMENTS_ENABLED =
     buildConf("spark.sql.tvf.allowMultipleTableArguments.enabled")
@@ -3974,6 +4016,14 @@ object SQLConf {
           "for Python execution with DataFrame and SQL. It can change during runtime.")
       .version("4.1.0")
       .fallbackConf(Python.PYTHON_WORKER_TRACEBACK_DUMP_INTERVAL_SECONDS)
+
+  val PYTHON_UDF_DAEMON_KILL_WORKER_ON_FLUSH_FAILURE =
+    buildConf("spark.sql.execution.pyspark.udf.daemonKillWorkerOnFlushFailure")
+      .doc(
+        s"Same as ${Python.PYTHON_DAEMON_KILL_WORKER_ON_FLUSH_FAILURE.key} " +
+          "for Python execution with DataFrame and SQL. It can change during runtime.")
+      .version("4.1.0")
+      .fallbackConf(Python.PYTHON_DAEMON_KILL_WORKER_ON_FLUSH_FAILURE)
 
   val PYTHON_WORKER_LOGGING_ENABLED =
     buildConf("spark.sql.pyspark.worker.logging.enabled")
@@ -5063,6 +5113,17 @@ object SQLConf {
       .doc("When set to true, a literal with an exponent (e.g. 1E-30) would be parsed " +
         "as Decimal rather than Double.")
       .version("3.0.0")
+      .booleanConf
+      .createWithDefault(false)
+
+  val LEGACY_IDENTIFIER_CLAUSE_ONLY =
+    buildConf("spark.sql.legacy.identifierClause")
+      .internal()
+      .doc("When set to false, IDENTIFIER('literal') is resolved to an identifier at parse time " +
+        "anywhere identifiers can occur. When set to true, only the legacy " +
+        " IDENTIFIER(constantExpr) clause is allowed, which evaluates the expression at analysis " +
+        " and is limited to a narrow subset of scenarios.")
+      .version("4.1.0")
       .booleanConf
       .createWithDefault(false)
 
@@ -6490,6 +6551,7 @@ object SQLConf {
 
   val PIPELINES_STREAM_STATE_POLLING_INTERVAL = {
     buildConf("spark.sql.pipelines.execution.streamstate.pollingInterval")
+      .internal()
       .doc(
         "Interval in seconds at which the stream state is polled for changes. This is used to " +
           "check if the stream has failed and needs to be restarted."
@@ -6501,6 +6563,7 @@ object SQLConf {
 
   val PIPELINES_WATCHDOG_MIN_RETRY_TIME_IN_SECONDS = {
     buildConf("spark.sql.pipelines.execution.watchdog.minRetryTime")
+      .internal()
       .doc(
         "Initial duration in seconds between the time when we notice a flow has failed and " +
           "when we try to restart the flow. The interval between flow restarts doubles with " +
@@ -6515,6 +6578,7 @@ object SQLConf {
 
   val PIPELINES_WATCHDOG_MAX_RETRY_TIME_IN_SECONDS = {
     buildConf("spark.sql.pipelines.execution.watchdog.maxRetryTime")
+      .internal()
       .doc(
         "Maximum time interval in seconds at which flows will be restarted."
       )
@@ -6525,6 +6589,7 @@ object SQLConf {
 
   val PIPELINES_MAX_CONCURRENT_FLOWS = {
     buildConf("spark.sql.pipelines.execution.maxConcurrentFlows")
+      .internal()
       .doc(
         "Max number of flows to execute at once. Used to tune performance for triggered " +
           "pipelines. Has no effect on continuous pipelines."
@@ -6537,6 +6602,7 @@ object SQLConf {
 
   val PIPELINES_TIMEOUT_MS_FOR_TERMINATION_JOIN_AND_LOCK = {
     buildConf("spark.sql.pipelines.timeoutMsForTerminationJoinAndLock")
+      .internal()
       .doc("Timeout in milliseconds to grab a lock for stopping update - default is 1hr.")
       .version("4.1.0")
       .timeConf(TimeUnit.MILLISECONDS)
@@ -6554,6 +6620,7 @@ object SQLConf {
 
   val PIPELINES_EVENT_QUEUE_CAPACITY = {
     buildConf("spark.sql.pipelines.event.queue.capacity")
+      .internal()
       .doc("Capacity of the event queue used in pipelined execution. When the queue is full, " +
         "non-terminal FlowProgressEvents will be dropped.")
       .version("4.1.0")
@@ -6886,6 +6953,17 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def stateStoreRowChecksumReadVerificationRatio: Long =
     getConf(STATE_STORE_ROW_CHECKSUM_READ_VERIFICATION_RATIO)
 
+  def stateStoreForceSnapshotUploadOnLag: Boolean = {
+    val value = getConf(STATE_STORE_FORCE_SNAPSHOT_UPLOAD_ON_LAG)
+    if (value && !stateStoreCoordinatorReportSnapshotUploadLag) {
+      throw new IllegalArgumentException(
+        "spark.sql.streaming.stateStore.forceSnapshotUploadOnLag can only be true if " +
+        "spark.sql.streaming.stateStore.coordinatorReportSnapshotUploadLag is also true."
+      )
+    }
+    value
+  }
+
   def checkpointLocation: Option[String] = getConf(CHECKPOINT_LOCATION)
 
   def checkpointFileChecksumEnabled: Boolean = getConf(STREAMING_CHECKPOINT_FILE_CHECKSUM_ENABLED)
@@ -7200,6 +7278,20 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   }
 
   /**
+   * Returns the lower case representation of a string if `caseSensitiveAnalysis` is enabled.
+   * Otherwise, returns the original string.
+   */
+  def canonicalize(s: String): String = {
+    if (!caseSensitiveAnalysis) {
+      // scalastyle:off caselocale
+      s.toLowerCase
+      // scalastyle:on caselocale
+    } else {
+      s
+    }
+  }
+
+  /**
    * Returns the error handler for handling hint errors.
    */
   def hintErrorHandler: HintErrorHandler = HintErrorLogger
@@ -7469,6 +7561,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   def pythonUDFWorkerTracebackDumpIntervalSeconds: Long =
     getConf(PYTHON_UDF_WORKER_TRACEBACK_DUMP_INTERVAL_SECONDS)
 
+  def pythonUDFDaemonKillWorkerOnFlushFailure: Boolean =
+    getConf(PYTHON_UDF_DAEMON_KILL_WORKER_ON_FLUSH_FAILURE)
+
   def pythonWorkerLoggingEnabled: Boolean = getConf(PYTHON_WORKER_LOGGING_ENABLED)
 
   def pythonUDFArrowConcurrencyLevel: Option[Int] = getConf(PYTHON_UDF_ARROW_CONCURRENCY_LEVEL)
@@ -7622,6 +7717,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   override def exponentLiteralAsDecimalEnabled: Boolean =
     getConf(SQLConf.LEGACY_EXPONENT_LITERAL_AS_DECIMAL_ENABLED)
 
+  def singleCharacterPipeOperatorEnabled: Boolean =
+    getConf(SQLConf.SINGLE_CHARACTER_PIPE_OPERATOR_ENABLED)
+
   def allowNegativeScaleOfDecimalEnabled: Boolean =
     getConf(SQLConf.LEGACY_ALLOW_NEGATIVE_SCALE_OF_DECIMAL_ENABLED)
 
@@ -7772,6 +7870,9 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
   override def legacyParameterSubstitutionConstantsOnly: Boolean =
     getConf(SQLConf.LEGACY_PARAMETER_SUBSTITUTION_CONSTANTS_ONLY)
 
+  override def legacyIdentifierClauseOnly: Boolean =
+    getConf(SQLConf.LEGACY_IDENTIFIER_CLAUSE_ONLY)
+
   def streamStatePollingInterval: Long = getConf(SQLConf.PIPELINES_STREAM_STATE_POLLING_INTERVAL)
 
   def watchdogMinRetryTimeInSeconds: Long = {
@@ -7799,11 +7900,13 @@ class SQLConf extends Serializable with Logging with SqlApiConf {
 
   def hadoopLineRecordReaderEnabled: Boolean = getConf(SQLConf.HADOOP_LINE_RECORD_READER_ENABLED)
 
-  def legacyXMLParserEnabled: Boolean =
-    getConf(SQLConf.LEGACY_XML_PARSER_ENABLED)
+  def shuffleConsolidationEnabled: Boolean = getConf(SQLConf.ENABLE_SHUFFLE_CONSOLIDATION)
 
   def coerceMergeNestedTypes: Boolean =
     getConf(SQLConf.MERGE_INTO_SOURCE_NESTED_TYPE_COERCION_ENABLED)
+
+  def shuffleConsolidationSizeThreshold: Long =
+    getConf(SQLConf.SHUFFLE_CONSOLIDATION_SIZE_THRESHOLD)
 
   /** ********************** SQLConf functionality methods ************ */
 

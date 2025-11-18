@@ -189,7 +189,8 @@ case class OrderedDistribution(ordering: Seq[SortOrder]) extends Distribution {
  * Represents data where tuples are broadcasted to every node. It is quite common that the
  * entire set of tuples is transformed into different data structure.
  */
-case class BroadcastDistribution(mode: BroadcastMode) extends Distribution {
+case class
+BroadcastDistribution(mode: BroadcastMode) extends Distribution {
   override def requiredNumPartitions: Option[Int] = Some(1)
 
   override def createPartitioning(numPartitions: Int): Partitioning = {
@@ -428,8 +429,11 @@ case class KeyGroupedPartitioning(
   }
 
   lazy val uniquePartitionValues: Seq[InternalRow] = {
+    val internalRowComparableFactory =
+      InternalRowComparableWrapper.getInternalRowComparableWrapperFactory(
+        expressions.map(_.dataType))
     partitionValues
-        .map(InternalRowComparableWrapper(_, expressions))
+        .map(internalRowComparableFactory)
         .distinct
         .map(_.row)
   }
@@ -448,11 +452,14 @@ object KeyGroupedPartitioning {
     val projectedPartitionValues = partitionValues.map(project(expressions, projectionPositions, _))
     val projectedOriginalPartitionValues =
       originalPartitionValues.map(project(expressions, projectionPositions, _))
+    val internalRowComparableFactory =
+      InternalRowComparableWrapper.getInternalRowComparableWrapperFactory(
+        projectedExpressions.map(_.dataType))
 
     val finalPartitionValues = projectedPartitionValues
-        .map(InternalRowComparableWrapper(_, projectedExpressions))
-        .distinct
-        .map(_.row)
+      .map(internalRowComparableFactory)
+      .distinct
+      .map(_.row)
 
     KeyGroupedPartitioning(projectedExpressions, finalPartitionValues.length,
       finalPartitionValues, projectedOriginalPartitionValues)
@@ -614,6 +621,54 @@ case class BroadcastPartitioning(mode: BroadcastMode) extends Partitioning {
     case _ => false
   }
 }
+
+/**
+ * A partitioning that always satisfies any distribution.
+ * This is useful when you want to ensure that a partitioning will always satisfy a distribution
+ * regardless of the distribution's requirements.
+ */
+case class PassThroughPartitioning(childPartitioning: Partitioning)
+    extends Expression with Partitioning with Unevaluable {
+  /**
+   * Always returns true, satisfying any distribution.
+   */
+  override def satisfies0(required: Distribution): Boolean = childPartitioning.satisfies(required)
+
+  override def createShuffleSpec(distribution: ClusteredDistribution): ShuffleSpec = {
+    childPartitioning.createShuffleSpec(distribution)
+  }
+
+  /** Returns the number of partitions that the data is split across */
+  override val numPartitions: Int = childPartitioning.numPartitions
+
+  // Expression interface implementation
+  override def children: Seq[Expression] = childPartitioning match {
+    case e: Expression => e.children
+    case _ => Nil
+  }
+
+  override def nullable: Boolean = false
+  override def dataType: DataType = IntegerType
+
+  override protected def withNewChildrenInternal(
+      newChildren: IndexedSeq[Expression]): PassThroughPartitioning = {
+    childPartitioning match {
+      case e: Expression =>
+        copy(childPartitioning = e.withNewChildren(newChildren).asInstanceOf[Partitioning])
+      case _ =>
+        this
+    }
+  }
+
+  override lazy val canonicalized: Expression = {
+    val canonicalizedChild = childPartitioning match {
+      case e: Expression => e.canonicalized.asInstanceOf[Partitioning]
+      case other => other
+    }
+    copy(childPartitioning = canonicalizedChild)
+  }
+}
+
 
 /**
  * This is used in the scenario where an operator has multiple children (e.g., join) and one or more
@@ -867,12 +922,14 @@ case class KeyGroupedShuffleSpec(
     //        transform functions.
     //  4. the partition values from both sides are following the same order.
     case otherSpec @ KeyGroupedShuffleSpec(otherPartitioning, otherDistribution, _) =>
+      lazy val internalRowComparableFactory =
+        InternalRowComparableWrapper.getInternalRowComparableWrapperFactory(
+          partitioning.expressions.map(_.dataType))
       distribution.clustering.length == otherDistribution.clustering.length &&
         numPartitions == other.numPartitions && areKeysCompatible(otherSpec) &&
           partitioning.partitionValues.zip(otherPartitioning.partitionValues).forall {
             case (left, right) =>
-              InternalRowComparableWrapper(left, partitioning.expressions)
-                .equals(InternalRowComparableWrapper(right, partitioning.expressions))
+              internalRowComparableFactory(left).equals(internalRowComparableFactory(right))
           }
     case ShuffleSpecCollection(specs) =>
       specs.exists(isCompatibleWith)
@@ -957,15 +1014,16 @@ case class KeyGroupedShuffleSpec(
 object KeyGroupedShuffleSpec {
   def reducePartitionValue(
       row: InternalRow,
-      expressions: Seq[Expression],
-      reducers: Seq[Option[Reducer[_, _]]]):
-    InternalRowComparableWrapper = {
-    val partitionVals = row.toSeq(expressions.map(_.dataType))
+      reducers: Seq[Option[Reducer[_, _]]],
+      dataTypes: Seq[DataType],
+      internalRowComparableWrapperFactory: InternalRow => InternalRowComparableWrapper
+  ): InternalRowComparableWrapper = {
+    val partitionVals = row.toSeq(dataTypes)
     val reducedRow = partitionVals.zip(reducers).map{
       case (v, Some(reducer: Reducer[Any, Any])) => reducer.reduce(v)
       case (v, _) => v
     }.toArray
-    InternalRowComparableWrapper(new GenericInternalRow(reducedRow), expressions)
+    internalRowComparableWrapperFactory(new GenericInternalRow(reducedRow))
   }
 }
 
