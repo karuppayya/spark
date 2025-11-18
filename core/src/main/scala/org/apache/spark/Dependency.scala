@@ -90,8 +90,7 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     val mapSideCombine: Boolean = false,
     val shuffleWriterProcessor: ShuffleWriteProcessor = new ShuffleWriteProcessor,
     val rowBasedChecksums: Array[RowBasedChecksum] = ShuffleDependency.EMPTY_ROW_BASED_CHECKSUMS,
-    val checksumMismatchFullRetryEnabled: Boolean = false,
-    val useRemoteShuffleStorage: Boolean = false
+    val checksumMismatchFullRetryEnabled: Boolean = false
     )
   extends Dependency[Product2[K, V]] with Logging {
 
@@ -251,7 +250,7 @@ class ShuffleDependency[K: ClassTag, V: ClassTag, C: ClassTag](
     )
   }
 
-  if (!useRemoteShuffleStorage) {
+  if (!shuffleWriterProcessor.isInstanceOf[org.apache.spark.sql.execution.exchange.ConsolidationShuffleMarker]) {
     _rdd.sparkContext.cleaner.foreach(_.registerShuffleForCleanup(this))
   }
   _rdd.sparkContext.shuffleDriverComponents.registerShuffle(shuffleId)

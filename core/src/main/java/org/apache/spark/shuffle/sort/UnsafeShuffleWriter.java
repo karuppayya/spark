@@ -138,7 +138,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     this.shuffleId = dep.shuffleId();
     this.serializer = dep.serializer().newInstance();
     this.partitioner = dep.partitioner();
-    this.remoteWrites = dep.useRemoteShuffleStorage();
+    this.remoteWrites = dep.shuffleWriterProcessor() instanceof org.apache.spark.sql.execution.exchange.ConsolidationShuffleMarker;
     this.writeMetrics = writeMetrics;
     this.shuffleExecutorComponents = shuffleExecutorComponents;
     this.taskContext = taskContext;

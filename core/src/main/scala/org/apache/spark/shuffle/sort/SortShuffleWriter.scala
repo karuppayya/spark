@@ -85,8 +85,11 @@ private[spark] class SortShuffleWriter[K, V, C](
       dep.shuffleId, mapId, dep.partitioner.numPartitions)
     sorter.writePartitionedMapOutput(dep.shuffleId, mapId, mapOutputWriter, writeMetrics)
     partitionLengths = mapOutputWriter.commitAllPartitions(sorter.getChecksums).getPartitionLengths
-    val blockManagerId = if (dep.useRemoteShuffleStorage) RemoteShuffleStorage.BLOCK_MANAGER_ID
-      else blockManager.shuffleServerId
+    val blockManagerId = if (dep.shuffleWriterProcessor.isInstanceOf[org.apache.spark.sql.execution.exchange.ConsolidationShuffleMarker]) {
+      RemoteShuffleStorage.BLOCK_MANAGER_ID
+    } else {
+      blockManager.shuffleServerId
+    }
     mapStatus =
     MapStatus(blockManagerId, partitionLengths, mapId, getAggregatedChecksumValue)
     mapStatus = MapStatus(blockManagerId, partitionLengths, mapId)

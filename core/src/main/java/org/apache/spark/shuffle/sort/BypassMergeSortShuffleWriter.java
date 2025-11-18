@@ -137,7 +137,7 @@ final class BypassMergeSortShuffleWriter<K, V>
     this.mapId = mapId;
     this.shuffleId = dep.shuffleId();
     this.partitioner = dep.partitioner();
-    this.remoteWrites = dep.useRemoteShuffleStorage();
+    this.remoteWrites = dep.shuffleWriterProcessor() instanceof org.apache.spark.sql.execution.exchange.ConsolidationShuffleMarker;
     this.numPartitions = partitioner.numPartitions();
     this.writeMetrics = writeMetrics;
     this.serializer = dep.serializer();

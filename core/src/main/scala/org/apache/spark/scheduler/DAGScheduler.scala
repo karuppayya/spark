@@ -1758,7 +1758,8 @@ private[spark] class DAGScheduler(
         case s: ShuffleMapStage =>
           // hack to prioritize remote shuffle writes
           if (properties != null) {
-            properties.setProperty("remote", s.shuffleDep.useRemoteShuffleStorage.toString)
+            properties.setProperty("remote",
+              s.shuffleDep.shuffleWriterProcessor.isInstanceOf[org.apache.spark.sql.execution.exchange.ConsolidationShuffleMarker].toString)
           }
           Some(s.shuffleDep.shuffleId)
         case _: ResultStage => None

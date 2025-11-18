@@ -17,7 +17,10 @@
 
 package org.apache.spark.sql.execution
 
-import org.apache.spark.sql.catalyst.plans.physical.PassThroughPartitioning
+import org.apache.spark.rdd.RDD
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{DirectShufflePartitionID, SparkPartitionID}
+import org.apache.spark.sql.catalyst.plans.physical.{PassThroughPartitioning, ShufflePartitionIdPassThrough}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.execution.adaptive.ShuffleQueryStageExec
 import org.apache.spark.sql.execution.exchange.{SHUFFLE_CONSOLIDATION, ShuffleExchangeExec}
@@ -31,8 +34,16 @@ object AddConsolidationShuffle extends Rule[SparkPlan] {
     }
     plan transformUp {
       case plan@ShuffleExchangeExec(part, _, origin, _) =>
+        val passThroughPartitioning = ShufflePartitionIdPassThrough(
+          DirectShufflePartitionID(SparkPartitionID()),
+          part.numPartitions
+        )
         // Non-adaptive: always add consolidation exchange
-        ShuffleExchangeExec(PassThroughPartitioning(part), plan, SHUFFLE_CONSOLIDATION)
+        new ShuffleExchangeExec(PassThroughPartitioning(part), plan, SHUFFLE_CONSOLIDATION) {
+          override def doExecute(): RDD[InternalRow] = {
+            super.doExecute()
+          }
+        }
       case p: ShuffleQueryStageExec
         if p.shuffle.shuffleOrigin != SHUFFLE_CONSOLIDATION  && p.isMaterialized =>
         // Add consolidation exchange only if:
@@ -41,7 +52,11 @@ object AddConsolidationShuffle extends Rule[SparkPlan] {
         val size = p.getRuntimeStatistics.sizeInBytes
         val consolidationThreshold = SQLConf.get.shuffleConsolidationSizeThreshold
         if (size > consolidationThreshold) {
-          ShuffleExchangeExec(PassThroughPartitioning(p.outputPartitioning), p,
+          val passThroughPartitioning = ShufflePartitionIdPassThrough(
+            DirectShufflePartitionID(SparkPartitionID()),
+            p.outputPartitioning.numPartitions
+          )
+          ShuffleExchangeExec(passThroughPartitioning, p,
             SHUFFLE_CONSOLIDATION)
         } else {
           p

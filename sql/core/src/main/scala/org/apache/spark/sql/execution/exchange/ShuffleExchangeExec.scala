@@ -207,7 +207,7 @@ case class ShuffleExchangeExec(
   ) ++ readMetrics ++ writeMetrics
 
   override def nodeName: String = {
-    if (outputPartitioning.isInstanceOf[PassThroughPartitioning]) {
+    if (shuffleOrigin == SHUFFLE_CONSOLIDATION) {
       "Consolidation exchange"
     } else {
       "Exchange"
@@ -257,7 +257,8 @@ case class ShuffleExchangeExec(
       child.output,
       outputPartitioning,
       serializer,
-      writeMetrics)
+      writeMetrics,
+      shuffleOrigin)
     metrics("numPartitions").set(dep.partitioner.numPartitions)
     val executionId = sparkContext.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
     SQLMetrics.postDriverMetricUpdates(
@@ -348,7 +349,8 @@ object ShuffleExchangeExec {
       outputAttributes: Seq[Attribute],
       newPartitioning: Partitioning,
       serializer: Serializer,
-      writeMetrics: Map[String, SQLMetric])
+      writeMetrics: Map[String, SQLMetric],
+      shuffleOrigin: ShuffleOrigin = ENSURE_REQUIREMENTS)
     : ShuffleDependency[Int, InternalRow, InternalRow] = {
     val part: Partitioner = newPartitioning match {
       case RoundRobinPartitioning(numPartitions) => new HashPartitioner(numPartitions)
@@ -382,7 +384,6 @@ object ShuffleExchangeExec {
           ascending = true,
           samplePointsPerPartitionHint = SQLConf.get.rangeExchangeSampleSizePerPartition)
       case SinglePartition => new ConstantPartitioner
-      case part: PassThroughPartitioning => new PartitionIdPassthrough(part.numPartitions)
       case k @ KeyGroupedPartitioning(expressions, n, _, _) =>
         val valueMap = k.uniquePartitionValues.zipWithIndex.map {
           case (partition, index) => (partition.toSeq(expressions.map(_.dataType)), index)
@@ -414,9 +415,6 @@ object ShuffleExchangeExec {
         val projection = UnsafeProjection.create(sortingExpressions.map(_.child), outputAttributes)
         row => projection(row)
       case SinglePartition => identity
-      case _: PassThroughPartitioning =>
-        lazy val partitionId: Int = TaskContext.getPartitionId()
-        _ => partitionId
       case KeyGroupedPartitioning(expressions, _, _, _) =>
         row => bindReferences(expressions, outputAttributes).map(_.eval(row))
       case s: ShufflePartitionIdPassThrough =>
@@ -509,10 +507,9 @@ object ShuffleExchangeExec {
         rddWithPartitionIds,
         new PartitionIdPassthrough(part.numPartitions),
         serializer,
-        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics),
+        shuffleWriterProcessor = createShuffleWriteProcessor(writeMetrics, shuffleOrigin),
         rowBasedChecksums = UnsafeRowChecksum.createUnsafeRowChecksums(checksumSize),
-        checksumMismatchFullRetryEnabled = SQLConf.get.shuffleChecksumMismatchFullRetryEnabled,
-        useRemoteShuffleStorage = newPartitioning.isInstanceOf[PassThroughPartitioning])
+        checksumMismatchFullRetryEnabled = SQLConf.get.shuffleChecksumMismatchFullRetryEnabled)
 
     dependency
   }
@@ -520,13 +517,34 @@ object ShuffleExchangeExec {
   /**
    * Create a customized [[ShuffleWriteProcessor]] for SQL which wrap the default metrics reporter
    * with [[SQLShuffleWriteMetricsReporter]] as new reporter for [[ShuffleWriteProcessor]].
+   *
+   * For consolidation shuffles, the processor is marked with [[ConsolidationShuffleMarker]]
+   * to indicate that remote storage should be used.
    */
-  def createShuffleWriteProcessor(metrics: Map[String, SQLMetric]): ShuffleWriteProcessor = {
-    new ShuffleWriteProcessor {
-      override protected def createMetricsReporter(
-          context: TaskContext): ShuffleWriteMetricsReporter = {
-        new SQLShuffleWriteMetricsReporter(context.taskMetrics().shuffleWriteMetrics, metrics)
+  def createShuffleWriteProcessor(
+      metrics: Map[String, SQLMetric],
+      shuffleOrigin: ShuffleOrigin): ShuffleWriteProcessor = {
+    if (shuffleOrigin == SHUFFLE_CONSOLIDATION) {
+      new ShuffleWriteProcessor with ConsolidationShuffleMarker {
+        override protected def createMetricsReporter(
+            context: TaskContext): ShuffleWriteMetricsReporter = {
+          new SQLShuffleWriteMetricsReporter(context.taskMetrics().shuffleWriteMetrics, metrics)
+        }
+      }
+    } else {
+      new ShuffleWriteProcessor {
+        override protected def createMetricsReporter(
+            context: TaskContext): ShuffleWriteMetricsReporter = {
+          new SQLShuffleWriteMetricsReporter(context.taskMetrics().shuffleWriteMetrics, metrics)
+        }
       }
     }
   }
 }
+
+/**
+ * Marker trait to identify shuffle write processors for consolidation shuffles.
+ * Shuffle writers can check if a processor implements this trait to determine
+ * whether to use remote storage for shuffle data.
+ */
+private[spark] trait ConsolidationShuffleMarker
