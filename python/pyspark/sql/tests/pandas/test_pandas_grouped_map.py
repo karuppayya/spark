@@ -18,6 +18,7 @@
 import datetime
 import unittest
 import logging
+import os
 
 from collections import OrderedDict
 from decimal import Decimal
@@ -287,12 +288,21 @@ class ApplyInPandasTestsMixin:
         # columns must be in order of applyInPandas schema when no columns given
         return pd.DataFrame([key + (pdf.v.mean(),)])
 
+    @unittest.skipIf(
+        os.environ.get("SPARK_SKIP_CONNECT_COMPAT_TESTS") == "1", "SPARK-54482: To be reenabled"
+    )
     def test_apply_in_pandas_returning_column_names(self):
         self._test_apply_in_pandas(ApplyInPandasTestsMixin.stats_with_column_names)
 
+    @unittest.skipIf(
+        os.environ.get("SPARK_SKIP_CONNECT_COMPAT_TESTS") == "1", "SPARK-54482: To be reenabled"
+    )
     def test_apply_in_pandas_returning_no_column_names(self):
         self._test_apply_in_pandas(ApplyInPandasTestsMixin.stats_with_no_column_names)
 
+    @unittest.skipIf(
+        os.environ.get("SPARK_SKIP_CONNECT_COMPAT_TESTS") == "1", "SPARK-54482: To be reenabled"
+    )
     def test_apply_in_pandas_returning_column_names_sometimes(self):
         def stats(key, pdf):
             if key[0] % 2:
@@ -332,9 +342,15 @@ class ApplyInPandasTestsMixin:
                 lambda key, pdf: pd.DataFrame([key + (pdf.v.mean(), pdf.v.std())])
             )
 
+    @unittest.skipIf(
+        os.environ.get("SPARK_SKIP_CONNECT_COMPAT_TESTS") == "1", "SPARK-54482: To be reenabled"
+    )
     def test_apply_in_pandas_returning_empty_dataframe(self):
         self._test_apply_in_pandas_returning_empty_dataframe(pd.DataFrame())
 
+    @unittest.skipIf(
+        os.environ.get("SPARK_SKIP_CONNECT_COMPAT_TESTS") == "1", "SPARK-54482: To be reenabled"
+    )
     def test_apply_in_pandas_returning_incompatible_type(self):
         with self.quiet():
             self.check_apply_in_pandas_returning_incompatible_type()
@@ -887,6 +903,9 @@ class ApplyInPandasTestsMixin:
         for row in result:
             self.assertEqual(24.5, row[1])
 
+    @unittest.skipIf(
+        os.environ.get("SPARK_SKIP_CONNECT_COMPAT_TESTS") == "1", "SPARK-54482: To be reenabled"
+    )
     def _test_apply_in_pandas_returning_empty_dataframe_error(self, empty_df, error):
         with self.quiet():
             with self.assertRaisesRegex(PythonException, error):
@@ -938,14 +957,14 @@ class ApplyInPandasTestsMixin:
                 self.assertEqual(row[1], 123)
 
     def test_arrow_batch_slicing(self):
-        df = self.spark.range(100000).select(
-            (sf.col("id") % 2).alias("key"), sf.col("id").alias("v")
-        )
+        n = 100000
+
+        df = self.spark.range(n).select((sf.col("id") % 2).alias("key"), sf.col("id").alias("v"))
         cols = {f"col_{i}": sf.col("v") + i for i in range(20)}
         df = df.withColumns(cols)
 
         def min_max_v(pdf):
-            assert len(pdf) == 100000 / 2, len(pdf)
+            assert len(pdf) == n / 2, len(pdf)
             return pd.DataFrame(
                 {
                     "key": [pdf.key.iloc[0]],
@@ -958,7 +977,7 @@ class ApplyInPandasTestsMixin:
             df.groupby("key").agg(sf.min("v").alias("min"), sf.max("v").alias("max")).sort("key")
         ).collect()
 
-        for maxRecords, maxBytes in [(1000, 4096), (0, 4096), (1000, 4096)]:
+        for maxRecords, maxBytes in [(1000, 2**31 - 1), (0, 4096), (1000, 4096)]:
             with self.subTest(maxRecords=maxRecords, maxBytes=maxBytes):
                 with self.sql_conf(
                     {
@@ -1000,20 +1019,20 @@ class ApplyInPandasTestsMixin:
                 df,
             )
 
-        logs = self.spark.table("system.session.python_worker_logs")
+            logs = self.spark.tvf.python_worker_logs()
 
-        assertDataFrameEqual(
-            logs.select("level", "msg", "context", "logger"),
-            [
-                Row(
-                    level="WARNING",
-                    msg=f"pandas grouped map: {dict(id=lst, value=[v*10 for v in lst])}",
-                    context={"func_name": func_with_logging.__name__},
-                    logger="test_pandas_grouped_map",
-                )
-                for lst in [[0, 2, 4, 6, 8], [1, 3, 5, 7]]
-            ],
-        )
+            assertDataFrameEqual(
+                logs.select("level", "msg", "context", "logger"),
+                [
+                    Row(
+                        level="WARNING",
+                        msg=f"pandas grouped map: {dict(id=lst, value=[v*10 for v in lst])}",
+                        context={"func_name": func_with_logging.__name__},
+                        logger="test_pandas_grouped_map",
+                    )
+                    for lst in [[0, 2, 4, 6, 8], [1, 3, 5, 7]]
+                ],
+            )
 
     def test_apply_in_pandas_iterator_basic(self):
         df = self.spark.createDataFrame(
