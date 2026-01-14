@@ -17,8 +17,6 @@
 
 package org.apache.spark.shuffle
 
-import scala.collection
-
 import org.apache.spark._
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.io.CompressionCodec
