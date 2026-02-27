@@ -185,6 +185,27 @@ private[spark] class TaskSchedulerImpl(
 
   val rootPool: Pool = new Pool("", schedulingMode, 0, 0)
 
+  // Weight provider for calculating TaskSet scheduling weights
+  private val taskSetWeightProvider: TaskSetWeightProvider = {
+    conf.get(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS) match {
+      case Some(className) =>
+        try {
+          logInfo(s"Creating TaskSetWeightProvider: $className")
+          Utils.classForName(className)
+            .getConstructor()
+            .newInstance()
+            .asInstanceOf[TaskSetWeightProvider]
+        } catch {
+          case e: Exception =>
+            logError(s"Failed to create TaskSetWeightProvider '$className', " +
+              s"using DefaultWeightProvider", e)
+            new DefaultWeightProvider()
+        }
+      case None =>
+        new DefaultWeightProvider()
+    }
+  }
+
   // This is a var so that we can reset it for testing purposes.
   private[spark] var taskResultGetter = new TaskResultGetter(sc.env, this)
 
@@ -212,6 +233,8 @@ private[spark] class TaskSchedulerImpl(
     schedulableBuilder = {
       schedulingMode match {
         case SchedulingMode.FIFO =>
+          new FIFOSchedulableBuilder(rootPool)
+        case SchedulingMode.WEIGHTED_FIFO =>
           new FIFOSchedulableBuilder(rootPool)
         case SchedulingMode.FAIR =>
           new FairSchedulableBuilder(rootPool, sc)
@@ -291,7 +314,8 @@ private[spark] class TaskSchedulerImpl(
     if (isStreamingTaskSet(taskSet)) {
       streamingTaskSetManager(taskSet, maxTaskFailures)
     } else {
-      new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock)
+      new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock,
+        taskSetWeightProvider)
     }
   }
 

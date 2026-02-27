@@ -15,42 +15,38 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.execution.adaptive
+package org.apache.spark.sql.execution.exchange
 
-import org.apache.spark.sql.errors.QueryExecutionErrors
 import org.apache.spark.sql.execution.SparkPlan
-import org.apache.spark.sql.execution.exchange.ShuffleExchangeLike
-import org.apache.spark.sql.execution.joins.ShuffledJoin
+import org.apache.spark.sql.execution.adaptive.{Cost, CostEvaluator, SimpleCost}
+import org.apache.spark.sql.execution.joins.{BroadcastHashJoinExec, ShuffledJoin}
+import org.apache.spark.sql.internal.SQLConf
 
 /**
- * A simple implementation of [[Cost]], which takes a number of [[Long]] as the cost value.
+ * A [[CostEvaluator]] that excludes [[ConsolidationShuffleExchangeExec]] from the shuffle count.
+ *
+ * This is identical to [[org.apache.spark.sql.execution.adaptive.SimpleCostEvaluator]] except
+ * consolidation exchanges are not counted as shuffles, preventing AQE from choosing plans
+ * that avoid consolidation.
+ *
+ * Configure via:
+ * {{{
+ *   spark.sql.adaptive.customCostEvaluatorClass=
+ *     org.apache.spark.sql.execution.exchange.ConsolidationCostEvaluator
+ * }}}
  */
-case class SimpleCost(value: Long) extends Cost {
-
-  override def compare(that: Cost): Int = that match {
-    case SimpleCost(thatValue) =>
-      if (value < thatValue) -1 else if (value > thatValue) 1 else 0
-    case _ =>
-      throw QueryExecutionErrors.cannotCompareCostWithTargetCostError(that.toString)
-  }
-}
-
-/**
- * A skew join aware implementation of [[CostEvaluator]], which counts the number of
- * [[ShuffleExchangeLike]] nodes and skew join nodes in the plan.
- */
-case class SimpleCostEvaluator(forceOptimizeSkewedJoin: Boolean) extends CostEvaluator {
+class ConsolidationCostEvaluator extends CostEvaluator {
   override def evaluateCost(plan: SparkPlan): Cost = {
     val numShuffles = plan.collect {
-      case s: ShuffleExchangeLike => s
+      case s: ShuffleExchangeLike if !s.isInstanceOf[ConsolidationShuffleExchangeExec] => s
     }.size
 
+    val forceOptimizeSkewedJoin = SQLConf.get.getConf(SQLConf.ADAPTIVE_FORCE_OPTIMIZE_SKEWED_JOIN)
     if (forceOptimizeSkewedJoin) {
       val numSkewJoins = plan.collect {
         case j: ShuffledJoin if j.isSkewJoin => j
+        case j: BroadcastHashJoinExec if j.isSkewJoin => j
       }.size
-      // We put `-numSkewJoins` in the first 32 bits of the long value, so that it's compared first
-      // when comparing the cost, and larger `numSkewJoins` means lower cost.
       SimpleCost(-numSkewJoins.toLong << 32 | numShuffles)
     } else {
       SimpleCost(numShuffles)

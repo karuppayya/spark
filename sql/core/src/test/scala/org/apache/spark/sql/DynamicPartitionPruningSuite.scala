@@ -19,7 +19,9 @@ package org.apache.spark.sql
 
 import org.scalatest.GivenWhenThen
 
-import org.apache.spark.sql.catalyst.expressions.{DynamicPruningExpression, Expression}
+import org.apache.spark.SparkException
+import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.expressions.{DynamicPruningExpression, Expression, ExprId}
 import org.apache.spark.sql.catalyst.expressions.CodegenObjectFactoryMode._
 import org.apache.spark.sql.catalyst.plans.ExistenceJoin
 import org.apache.spark.sql.connector.catalog.{InMemoryTableCatalog, InMemoryTableWithV2FilterCatalog}
@@ -1646,6 +1648,72 @@ abstract class DynamicPartitionPruningSuiteBase
       checkAnswer(df, Row(4, 1300, "California") :: Row(1, 1000, "North-Holland") :: Nil)
       // CleanupDynamicPruningFilters should remove DPP in first child of union
       assert(collectDynamicPruningExpressions(df.queryExecution.executedPlan).size === 1)
+    }
+  }
+
+  test("InSubqueryExec result is @transient and lost after serialization") {
+    // InSubqueryExec with isDynamicPruning=true stores the subquery result in a @transient
+    // field and does NOT broadcast it. This means the result is only available on the driver.
+    // If the expression is serialized to executors (e.g., inside a FilterExec not covered by
+    // WholeStageCodegen), eval() fails with "has not finished".
+    val childPlan = spark.range(0, 10).queryExecution.executedPlan
+    val idAttr = childPlan.output.head
+
+    val subqueryPlan = spark.range(1, 4).queryExecution.executedPlan
+    val subqueryExec = SubqueryExec("test-subquery", subqueryPlan)
+
+    val populated = InSubqueryExec(
+      idAttr, subqueryExec, ExprId(0), isDynamicPruning = true)
+    populated.updateResult()
+    assert(populated.values().isDefined,
+      "result should be available on driver after updateResult()")
+
+    // With isDynamicPruning=true, resultBroadcast is never set.
+    // A fresh instance (simulating deserialization where @transient result becomes null)
+    // has both result=null and resultBroadcast=null, causing prepareResult() to fail.
+    val fresh = InSubqueryExec(
+      idAttr, subqueryExec, ExprId(0), isDynamicPruning = true)
+    assert(fresh.values().isEmpty, "result should be null before updateResult()")
+
+    val e = intercept[IllegalArgumentException] {
+      fresh.eval(InternalRow.empty)
+    }
+    assert(e.getMessage.contains("has not finished"))
+  }
+
+  test("FilterExec with DPP InSubqueryExec fails outside WholeStageCodegen") {
+    // Reproduces a production bug seen with V2 data sources (e.g., Iceberg) where:
+    // 1. DPP with broadcast reuse creates InSubqueryExec(isDynamicPruning=true)
+    // 2. The DPP filter is placed in a FilterExec (not pushed into scan's runtimeFilters)
+    // 3. The FilterExec is NOT covered by WholeStageCodegen (broken by ColumnarToRow)
+    // 4. FilterExec.doExecute() serializes the condition to executors via
+    //    FilterEvaluatorFactory, losing the @transient result field
+    // 5. On executor: eval() -> prepareResult() -> "has not finished" error
+    withSQLConf(SQLConf.WHOLESTAGE_CODEGEN_ENABLED.key -> "false") {
+      val childPlan =
+        spark.range(0, 10, 1, numPartitions = 2).queryExecution.executedPlan
+      val idAttr = childPlan.output.head
+
+      val subqueryPlan = spark.range(1, 4).queryExecution.executedPlan
+      val subqueryExec = SubqueryExec("test-subquery", subqueryPlan)
+
+      val inSubquery = InSubqueryExec(
+        idAttr, subqueryExec, ExprId(0), isDynamicPruning = true)
+
+      val filterPlan = FilterExec(inSubquery, childPlan)
+
+      val e = intercept[SparkException] {
+        filterPlan.execute().collect()
+      }
+
+      def hasExpectedCause(t: Throwable): Boolean = {
+        if (t == null) false
+        else if (t.getMessage != null && t.getMessage.contains("has not finished")) true
+        else hasExpectedCause(t.getCause)
+      }
+
+      assert(hasExpectedCause(e),
+        s"Expected 'has not finished' error but got: ${e.getMessage}")
     }
   }
 }

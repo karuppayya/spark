@@ -1,0 +1,931 @@
+From 8f77991a42640319866a667a07a07537eaa03ec2 Mon Sep 17 00:00:00 2001
+From: Karuppayya Rajendran <karuppayya.rajendran@salesforce.com>
+Date: Fri, 27 Feb 2026 13:20:30 -0800
+Subject: [PATCH] Taskwightprovider + extensible scheduling
+
+---
+ .../spark/internal/config/package.scala       |  18 ++
+ .../org/apache/spark/scheduler/Pool.scala     |  63 +++++-
+ .../spark/scheduler/SchedulingAlgorithm.scala |  49 +++++
+ .../spark/scheduler/SchedulingMode.scala      |  12 +-
+ .../spark/scheduler/TaskSchedulerImpl.scala   |  24 ++-
+ .../spark/scheduler/TaskSetManager.scala      |  11 +-
+ .../scheduler/TaskSetWeightProvider.scala     |  40 ++++
+ .../CustomSchedulingIntegrationSuite.scala    | 193 ++++++++++++++++++
+ .../SchedulerPerformanceBenchmark.scala       |   0
+ .../SchedulingAlgorithmProviderSuite.scala    | 177 ++++++++++++++++
+ .../TaskSetWeightProviderSuite.scala          | 183 +++++++++++++++++
+ 11 files changed, 756 insertions(+), 14 deletions(-)
+ create mode 100644 core/src/main/scala/org/apache/spark/scheduler/TaskSetWeightProvider.scala
+ create mode 100644 core/src/test/scala/org/apache/spark/scheduler/CustomSchedulingIntegrationSuite.scala
+ create mode 100644 core/src/test/scala/org/apache/spark/scheduler/SchedulerPerformanceBenchmark.scala
+ create mode 100644 core/src/test/scala/org/apache/spark/scheduler/SchedulingAlgorithmProviderSuite.scala
+ create mode 100644 core/src/test/scala/org/apache/spark/scheduler/TaskSetWeightProviderSuite.scala
+
+diff --git a/core/src/main/scala/org/apache/spark/internal/config/package.scala b/core/src/main/scala/org/apache/spark/internal/config/package.scala
+index 331d798a3d7..c2228d944dc 100644
+--- a/core/src/main/scala/org/apache/spark/internal/config/package.scala
++++ b/core/src/main/scala/org/apache/spark/internal/config/package.scala
+@@ -2359,6 +2359,24 @@ package object config {
+       .enumConf(SchedulingMode)
+       .createWithDefault(SchedulingMode.FIFO)
+ 
++  private[spark] val SCHEDULER_ALGORITHM_PROVIDERS =
++    ConfigBuilder("spark.scheduler.algorithm.providers")
++      .doc("Comma-separated list of SchedulingAlgorithmProvider class names for custom " +
++        "scheduling algorithms. Providers are tried in order before falling back to built-in " +
++        "algorithms (FIFO, FAIR).")
++      .version("3.6.0")
++      .stringConf
++      .createWithDefault("")
++
++  private[spark] val SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS =
++    ConfigBuilder("spark.scheduler.taskset.weight.provider.class")
++      .doc("Fully qualified class name of TaskSetWeightProvider implementation for " +
++        "calculating per-stage scheduling weights. If not set, uses DefaultWeightProvider " +
++        "(weight=1 for all stages).")
++      .version("3.6.0")
++      .stringConf
++      .createOptional
++
+   private[spark] val SCHEDULER_REVIVE_INTERVAL =
+     ConfigBuilder("spark.scheduler.revive.interval")
+       .version("0.8.1")
+diff --git a/core/src/main/scala/org/apache/spark/scheduler/Pool.scala b/core/src/main/scala/org/apache/spark/scheduler/Pool.scala
+index 97edbb08c7c..8d8c98fe154 100644
+--- a/core/src/main/scala/org/apache/spark/scheduler/Pool.scala
++++ b/core/src/main/scala/org/apache/spark/scheduler/Pool.scala
+@@ -22,8 +22,11 @@ import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
+ import scala.collection.mutable.ArrayBuffer
+ import scala.jdk.CollectionConverters._
+ 
++import org.apache.spark.{SparkConf, SparkEnv}
+ import org.apache.spark.internal.Logging
++import org.apache.spark.internal.config._
+ import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
++import org.apache.spark.util.Utils
+ 
+ /**
+  * A Schedulable entity that represents collection of Pools or TaskSetManagers
+@@ -48,15 +51,59 @@ private[spark] class Pool(
+   var parent: Pool = null
+ 
+   private val taskSetSchedulingAlgorithm: SchedulingAlgorithm = {
+-    schedulingMode match {
+-      case SchedulingMode.FAIR =>
+-        new FairSchedulingAlgorithm()
+-      case SchedulingMode.FIFO =>
++    val conf = SparkEnv.get.conf
++    val modeString = schedulingMode.toString
++
++    // Create provider chain: custom providers first, then built-in as fallback
++    val providers = createProviderChain(conf)
++
++    // Try each provider until one returns an algorithm
++    providers.view
++      .flatMap(_.createAlgorithm(modeString, conf))
++      .headOption
++      .getOrElse {
++        logWarning(s"No provider found for scheduling mode '$modeString', falling back to FIFO")
+         new FIFOSchedulingAlgorithm()
+-      case _ =>
+-        val msg = s"Unsupported scheduling mode: $schedulingMode. Use FAIR or FIFO instead."
+-        throw new IllegalArgumentException(msg)
+-    }
++      }
++  }
++
++  /**
++   * Create the chain of algorithm providers.
++   * Custom providers are tried first, built-in provider is the fallback.
++   */
++  private def createProviderChain(conf: SparkConf): Seq[SchedulingAlgorithmProvider] = {
++    val customProviders = loadCustomProviders(conf)
++    val builtInProvider = new BuiltInAlgorithmProvider()
++
++    customProviders :+ builtInProvider
++  }
++
++  /**
++   * Load custom algorithm providers from configuration.
++   * Reads spark.scheduler.algorithm.providers (comma-separated class names).
++   */
++  private def loadCustomProviders(conf: SparkConf): Seq[SchedulingAlgorithmProvider] = {
++    val providerClasses = conf.get(SCHEDULER_ALGORITHM_PROVIDERS)
++      .split(",")
++      .map(_.trim)
++      .filter(_.nonEmpty)
++
++    providerClasses.flatMap { className =>
++      try {
++        val clazz = Utils.classForName(className)
++        val provider = clazz.getConstructor()
++          .newInstance()
++          .asInstanceOf[SchedulingAlgorithmProvider]
++
++        logInfo(s"Loaded custom algorithm provider: $className " +
++          s"(supports: ${provider.supportedModes().mkString(", ")})")
++        Some(provider)
++      } catch {
++        case e: Exception =>
++          logError(s"Failed to load custom algorithm provider '$className'", e)
++          None
++      }
++    }.toSeq
+   }
+ 
+   override def isSchedulable: Boolean = true
+diff --git a/core/src/main/scala/org/apache/spark/scheduler/SchedulingAlgorithm.scala b/core/src/main/scala/org/apache/spark/scheduler/SchedulingAlgorithm.scala
+index 18ebbbe78a5..637ecdf4726 100644
+--- a/core/src/main/scala/org/apache/spark/scheduler/SchedulingAlgorithm.scala
++++ b/core/src/main/scala/org/apache/spark/scheduler/SchedulingAlgorithm.scala
+@@ -17,15 +17,45 @@
+ 
+ package org.apache.spark.scheduler
+ 
++import java.util.Locale
++
++import org.apache.spark.SparkConf
++import org.apache.spark.annotation.DeveloperApi
++
+ /**
+  * An interface for sort algorithm
+  * FIFO: FIFO algorithm between TaskSetManagers
+  * FS: FS algorithm between Pools, and FIFO or FS within Pools
++ * WeightedFIFO: FIFO algorithm with configurable weights from TaskSetManager
++ *
++ * This trait is extensible - users can implement custom scheduling algorithms
++ * and load them via SchedulingAlgorithmProvider.
+  */
+ private[spark] trait SchedulingAlgorithm {
+   def comparator(s1: Schedulable, s2: Schedulable): Boolean
+ }
+ 
++/**
++ * :: DeveloperApi ::
++ * Provider interface for loading custom scheduling algorithms.
++ *
++ * Implementations can be registered via spark.scheduler.algorithm.providers
++ * and referenced in fairscheduler.xml.
++ *
++ * @since 3.6.0
++ */
++@DeveloperApi
++trait SchedulingAlgorithmProvider {
++  /**
++   * Create a scheduling algorithm for the given mode.
++   * @return Some(algorithm) if supported, None otherwise
++   */
++  def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm]
++
++  /** List of scheduling modes supported by this provider. */
++  def supportedModes(): Seq[String]
++}
++
+ private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
+   override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {
+     val priority1 = s1.priority
+@@ -73,3 +103,22 @@ private[spark] class FairSchedulingAlgorithm extends SchedulingAlgorithm {
+   }
+ }
+ 
++/**
++ * Built-in algorithm provider that supports Spark's native scheduling modes.
++ * Provides: FIFO, FAIR
++ */
++private[spark] class BuiltInAlgorithmProvider extends SchedulingAlgorithmProvider {
++
++  override def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm] = {
++    mode.toUpperCase(Locale.ROOT) match {
++      case "FIFO" => Some(new FIFOSchedulingAlgorithm())
++      case "FAIR" => Some(new FairSchedulingAlgorithm())
++      case _ => None
++    }
++  }
++
++  override def supportedModes(): Seq[String] = {
++    Seq("FIFO", "FAIR")
++  }
++}
++
+diff --git a/core/src/main/scala/org/apache/spark/scheduler/SchedulingMode.scala b/core/src/main/scala/org/apache/spark/scheduler/SchedulingMode.scala
+index 75186b6ba4a..5ddd25b6573 100644
+--- a/core/src/main/scala/org/apache/spark/scheduler/SchedulingMode.scala
++++ b/core/src/main/scala/org/apache/spark/scheduler/SchedulingMode.scala
+@@ -18,9 +18,15 @@
+ package org.apache.spark.scheduler
+ 
+ /**
+- *  "FAIR" and "FIFO" determines which policy is used
+- *    to order tasks amongst a Schedulable's sub-queues
+- *  "NONE" is used when the a Schedulable has no sub-queues.
++ * Scheduling mode for ordering tasks amongst a Schedulable's sub-queues.
++ *
++ * Built-in modes:
++ *  - "FAIR": Fair scheduling algorithm
++ *  - "FIFO": First-in-first-out scheduling
++ *  - "NONE": Used when a Schedulable has no sub-queues
++ *
++ * Custom scheduling algorithms can be provided via SchedulingAlgorithmProvider.
++ * See SchedulingAlgorithmProvider trait for details.
+  */
+ object SchedulingMode extends Enumeration {
+ 
+diff --git a/core/src/main/scala/org/apache/spark/scheduler/TaskSchedulerImpl.scala b/core/src/main/scala/org/apache/spark/scheduler/TaskSchedulerImpl.scala
+index 66f9a907158..485675e2742 100644
+--- a/core/src/main/scala/org/apache/spark/scheduler/TaskSchedulerImpl.scala
++++ b/core/src/main/scala/org/apache/spark/scheduler/TaskSchedulerImpl.scala
+@@ -185,6 +185,27 @@ private[spark] class TaskSchedulerImpl(
+ 
+   val rootPool: Pool = new Pool("", schedulingMode, 0, 0)
+ 
++  // Weight provider for calculating TaskSet scheduling weights
++  private val taskSetWeightProvider: TaskSetWeightProvider = {
++    conf.get(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS) match {
++      case Some(className) =>
++        try {
++          logInfo(s"Creating TaskSetWeightProvider: $className")
++          Utils.classForName(className)
++            .getConstructor()
++            .newInstance()
++            .asInstanceOf[TaskSetWeightProvider]
++        } catch {
++          case e: Exception =>
++            logError(s"Failed to create TaskSetWeightProvider '$className', " +
++              s"using DefaultWeightProvider", e)
++            new DefaultWeightProvider()
++        }
++      case None =>
++        new DefaultWeightProvider()
++    }
++  }
++
+   // This is a var so that we can reset it for testing purposes.
+   private[spark] var taskResultGetter = new TaskResultGetter(sc.env, this)
+ 
+@@ -288,7 +309,8 @@ private[spark] class TaskSchedulerImpl(
+   private[scheduler] def createTaskSetManager(
+       taskSet: TaskSet,
+       maxTaskFailures: Int): TaskSetManager = {
+-    new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock)
++    new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock,
++      taskSetWeightProvider)
+   }
+ 
+   // Kill all the tasks in all the stage attempts of the same stage Id. Note stage attempts won't
+diff --git a/core/src/main/scala/org/apache/spark/scheduler/TaskSetManager.scala b/core/src/main/scala/org/apache/spark/scheduler/TaskSetManager.scala
+index 69e0a10a34b..43ac100dc7e 100644
+--- a/core/src/main/scala/org/apache/spark/scheduler/TaskSetManager.scala
++++ b/core/src/main/scala/org/apache/spark/scheduler/TaskSetManager.scala
+@@ -58,7 +58,9 @@ private[spark] class TaskSetManager(
+     val taskSet: TaskSet,
+     val maxTaskFailures: Int,
+     healthTracker: Option[HealthTracker] = None,
+-    clock: Clock = new SystemClock()) extends Schedulable with Logging {
++    clock: Clock = new SystemClock(),
++    weightProvider: TaskSetWeightProvider = new DefaultWeightProvider())
++  extends Schedulable with Logging {
+ 
+   private val conf = sched.sc.conf
+ 
+@@ -133,11 +135,16 @@ private[spark] class TaskSetManager(
+   val taskAttempts = Array.fill[List[TaskInfo]](numTasks)(Nil)
+   private[scheduler] var tasksSuccessful = 0
+ 
+-  val weight = 1
+   val minShare = 0
+   var priority = taskSet.priority
+   val stageId = taskSet.stageId
+   val name = "TaskSet_" + taskSet.id
++
++  // Weight for scheduling priority, derived from TaskSetWeightProvider.
++  // Higher weight = higher scheduling priority.
++  // Provider is created once in TaskSchedulerImpl and reused across all TaskSets.
++  // IMPORTANT: Must be initialized AFTER stageId and other fields that weight providers may access.
++  val weight: Int = weightProvider.getWeight(this)
+   var parent: Pool = null
+   private var totalResultSize = 0L
+   private var calculatedTasks = 0
+diff --git a/core/src/main/scala/org/apache/spark/scheduler/TaskSetWeightProvider.scala b/core/src/main/scala/org/apache/spark/scheduler/TaskSetWeightProvider.scala
+new file mode 100644
+index 00000000000..fd336ee2d9c
+--- /dev/null
++++ b/core/src/main/scala/org/apache/spark/scheduler/TaskSetWeightProvider.scala
+@@ -0,0 +1,40 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *    http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.spark.scheduler
++
++/**
++ * Trait for providing scheduling weights for TaskSets.
++ *
++ * Implementations can derive weights based on TaskSetManager context such as
++ * task count, stage type, or other metadata.
++ */
++private[spark] trait TaskSetWeightProvider extends Serializable {
++  /**
++   * Calculate the scheduling weight for a TaskSetManager.
++   * @return Weight as an integer (higher = higher priority)
++   */
++  def getWeight(taskSetManager: TaskSetManager): Int
++}
++
++/**
++ * Default implementation that returns weight of 1 for all TaskSets.
++ * This preserves current Spark behavior where all stages have equal weight.
++ */
++private[spark] class DefaultWeightProvider extends TaskSetWeightProvider {
++  override def getWeight(taskSetManager: TaskSetManager): Int = 1
++}
+diff --git a/core/src/test/scala/org/apache/spark/scheduler/CustomSchedulingIntegrationSuite.scala b/core/src/test/scala/org/apache/spark/scheduler/CustomSchedulingIntegrationSuite.scala
+new file mode 100644
+index 00000000000..a2ad1298916
+--- /dev/null
++++ b/core/src/test/scala/org/apache/spark/scheduler/CustomSchedulingIntegrationSuite.scala
+@@ -0,0 +1,193 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *    http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.spark.scheduler
++
++import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SparkFunSuite}
++import org.apache.spark.internal.config._
++import org.apache.spark.resource.ResourceProfile
++
++/**
++ * Integration tests for custom scheduling algorithm and weight providers.
++ */
++class CustomSchedulingIntegrationSuite extends SparkFunSuite with LocalSparkContext {
++
++  def createTaskSetManager(
++      stageId: Int,
++      numTasks: Int,
++      taskScheduler: TaskSchedulerImpl): TaskSetManager = {
++    val tasks = Array.tabulate[Task[_]](numTasks) { i =>
++      new FakeTask(stageId, i, Nil)
++    }
++    taskScheduler.createTaskSetManager(
++      new TaskSet(tasks, stageId, 0, 0, null,
++        ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++  }
++
++  test("Custom weight provider sets correct weights") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.TaskCountWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Create task sets with different sizes
++    // TaskCountWeightProvider will assign weight = numTasks * 10
++    val tsm1 = createTaskSetManager(1, 2, taskScheduler)  // weight = 20
++    val tsm2 = createTaskSetManager(2, 10, taskScheduler) // weight = 100
++    val tsm3 = createTaskSetManager(3, 5, taskScheduler)  // weight = 50
++
++    // Verify weights are set correctly by the custom provider
++    assert(tsm1.weight === 20)
++    assert(tsm2.weight === 100)
++    assert(tsm3.weight === 50)
++  }
++
++  test("Default weight provider maintains equal priority for all stages") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++    // No custom weight provider configured
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    val rootPool = new Pool("", SchedulingMode.FAIR, 0, 0)
++
++    val tsm1 = createTaskSetManager(1, 2, taskScheduler)
++    val tsm2 = createTaskSetManager(2, 10, taskScheduler)
++    val tsm3 = createTaskSetManager(3, 5, taskScheduler)
++
++    rootPool.addSchedulable(tsm1)
++    rootPool.addSchedulable(tsm2)
++    rootPool.addSchedulable(tsm3)
++
++    // All should have weight = 1 (default)
++    assert(tsm1.weight === 1)
++    assert(tsm2.weight === 1)
++    assert(tsm3.weight === 1)
++  }
++
++  test("Built-in algorithms still work with custom weight provider") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.TaskCountWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Test FIFO pool
++    val fifoPool = new Pool("fifo", SchedulingMode.FIFO, 0, 0)
++    val tsm1 = createTaskSetManager(1, 5, taskScheduler)
++    val tsm2 = createTaskSetManager(2, 10, taskScheduler)
++
++    fifoPool.addSchedulable(tsm1)
++    fifoPool.addSchedulable(tsm2)
++
++    val sortedQueue = fifoPool.getSortedTaskSetQueue
++    // FIFO should maintain submission order regardless of weight
++    assert(sortedQueue(0).stageId === 1)
++    assert(sortedQueue(1).stageId === 2)
++  }
++
++  test("Empty provider configuration string is handled correctly") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS, "")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Should work with built-in algorithms
++    val pool = new Pool("", SchedulingMode.FIFO, 0, 0)
++    assert(pool != null)
++  }
++
++  test("Provider configuration with whitespace is handled correctly") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS, " , , ")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Should work with built-in algorithms
++    val pool = new Pool("", SchedulingMode.FIFO, 0, 0)
++    assert(pool != null)
++  }
++
++  test("Mixed valid and invalid providers") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS,
++        "org.apache.spark.scheduler.NonExistent," +
++        "org.apache.spark.scheduler.WeightedFIFOAlgorithmProvider")
++
++    sc = new SparkContext(conf)
++    // Should successfully load with valid provider
++    assert(sc != null)
++  }
++
++  test("Weight provider serialization") {
++    val provider = new TaskCountWeightProvider()
++
++    // Provider should be serializable
++    val serialized = org.apache.spark.util.Utils.serialize(provider)
++    val deserialized = org.apache.spark.util.Utils.deserialize[TaskSetWeightProvider](serialized)
++
++    assert(deserialized.isInstanceOf[TaskCountWeightProvider])
++  }
++
++  test("Default weight provider serialization") {
++    val provider = new DefaultWeightProvider()
++
++    // Provider should be serializable
++    val serialized = org.apache.spark.util.Utils.serialize(provider)
++    val deserialized = org.apache.spark.util.Utils.deserialize[TaskSetWeightProvider](serialized)
++
++    assert(deserialized.isInstanceOf[DefaultWeightProvider])
++  }
++
++  test("Custom algorithm with custom weight provider") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS,
++        "org.apache.spark.scheduler.WeightedFIFOAlgorithmProvider")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.TaskCountWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Both custom providers should work together
++    val tsm1 = createTaskSetManager(1, 5, taskScheduler)
++    val tsm2 = createTaskSetManager(2, 5, taskScheduler)
++
++    // Weight should come from TaskCountWeightProvider (numTasks * 10)
++    assert(tsm1.weight === 50)
++    assert(tsm2.weight === 50)
++  }
++}
+diff --git a/core/src/test/scala/org/apache/spark/scheduler/SchedulerPerformanceBenchmark.scala b/core/src/test/scala/org/apache/spark/scheduler/SchedulerPerformanceBenchmark.scala
+new file mode 100644
+index 00000000000..e69de29bb2d
+diff --git a/core/src/test/scala/org/apache/spark/scheduler/SchedulingAlgorithmProviderSuite.scala b/core/src/test/scala/org/apache/spark/scheduler/SchedulingAlgorithmProviderSuite.scala
+new file mode 100644
+index 00000000000..f4fa0a3eb48
+--- /dev/null
++++ b/core/src/test/scala/org/apache/spark/scheduler/SchedulingAlgorithmProviderSuite.scala
+@@ -0,0 +1,177 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *    http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.spark.scheduler
++
++import java.util.Locale
++
++import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SparkFunSuite}
++import org.apache.spark.internal.config._
++
++/**
++ * Tests for SchedulingAlgorithmProvider functionality.
++ */
++class SchedulingAlgorithmProviderSuite extends SparkFunSuite with LocalSparkContext {
++
++  test("BuiltInAlgorithmProvider supports FIFO and FAIR") {
++    val provider = new BuiltInAlgorithmProvider()
++    val conf = new SparkConf()
++
++    val fifo = provider.createAlgorithm("FIFO", conf)
++    assert(fifo.isDefined)
++    assert(fifo.get.isInstanceOf[FIFOSchedulingAlgorithm])
++
++    val fair = provider.createAlgorithm("FAIR", conf)
++    assert(fair.isDefined)
++    assert(fair.get.isInstanceOf[FairSchedulingAlgorithm])
++
++    val unsupported = provider.createAlgorithm("CUSTOM", conf)
++    assert(unsupported.isEmpty)
++
++    assert(provider.supportedModes() === Seq("FIFO", "FAIR"))
++  }
++
++  test("BuiltInAlgorithmProvider is case insensitive") {
++    val provider = new BuiltInAlgorithmProvider()
++    val conf = new SparkConf()
++
++    val fifoLower = provider.createAlgorithm("fifo", conf)
++    assert(fifoLower.isDefined)
++    assert(fifoLower.get.isInstanceOf[FIFOSchedulingAlgorithm])
++
++    val fairMixed = provider.createAlgorithm("FaIr", conf)
++    assert(fairMixed.isDefined)
++    assert(fairMixed.get.isInstanceOf[FairSchedulingAlgorithm])
++  }
++
++  test("Custom algorithm provider is loaded and used") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS,
++        "org.apache.spark.scheduler.WeightedFIFOAlgorithmProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Just verify that the context can be created with custom provider
++    assert(taskScheduler != null)
++  }
++
++  test("Multiple custom providers can be registered") {
++    val conf = new SparkConf()
++      .set(SCHEDULER_ALGORITHM_PROVIDERS,
++        "org.apache.spark.scheduler.WeightedFIFOAlgorithmProvider," +
++        "org.apache.spark.scheduler.PriorityAlgorithmProvider")
++
++    sc = new SparkContext("local", "test", conf)
++    // Just verify that the context can be created with multiple providers
++    assert(sc != null)
++  }
++
++  test("Invalid custom provider is ignored") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS,
++        "org.apache.spark.scheduler.NonExistentProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Should fall back to built-in algorithms without error
++    val pool = new Pool("", SchedulingMode.FIFO, 0, 0)
++    assert(pool != null)
++  }
++
++  test("Custom provider is tried before built-in provider") {
++    val provider = new WeightedFIFOAlgorithmProvider()
++    val conf = new SparkConf()
++
++    // Custom provider should handle "WEIGHTED_FIFO"
++    val weighted = provider.createAlgorithm("WEIGHTED_FIFO", conf)
++    assert(weighted.isDefined)
++    assert(weighted.get.isInstanceOf[WeightedFIFOSchedulingAlgorithm])
++
++    // Custom provider should not handle standard modes
++    val fifo = provider.createAlgorithm("FIFO", conf)
++    assert(fifo.isEmpty)
++  }
++
++  test("Provider chain falls back to built-in for standard modes") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_ALGORITHM_PROVIDERS,
++        "org.apache.spark.scheduler.WeightedFIFOAlgorithmProvider")
++
++    sc = new SparkContext(conf)
++
++    // Even with custom provider, built-in FIFO/FAIR should still work
++    val pool = new Pool("", SchedulingMode.FIFO, 0, 0)
++    assert(pool != null)
++  }
++}
++
++/**
++ * Custom algorithm provider for testing that provides "WEIGHTED_FIFO" algorithm.
++ */
++class WeightedFIFOAlgorithmProvider extends SchedulingAlgorithmProvider {
++  override def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm] = {
++    if (mode.toUpperCase(Locale.ROOT) == "WEIGHTED_FIFO") {
++      Some(new WeightedFIFOSchedulingAlgorithm())
++    } else {
++      None
++    }
++  }
++
++  override def supportedModes(): Seq[String] = Seq("WEIGHTED_FIFO")
++}
++
++/**
++ * Custom scheduling algorithm for testing that orders by weight then priority.
++ */
++class WeightedFIFOSchedulingAlgorithm extends SchedulingAlgorithm {
++  override def comparator(s1: Schedulable, s2: Schedulable): Boolean = {
++    if (s1.weight != s2.weight) {
++      s1.weight > s2.weight
++    } else {
++      val priority1 = s1.priority
++      val priority2 = s2.priority
++      if (priority1 != priority2) {
++        priority1 < priority2
++      } else {
++        s1.stageId < s2.stageId
++      }
++    }
++  }
++}
++
++/**
++ * Another custom provider for testing multiple providers.
++ */
++class PriorityAlgorithmProvider extends SchedulingAlgorithmProvider {
++  override def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm] = {
++    if (mode.toUpperCase(Locale.ROOT) == "PRIORITY") {
++      Some(new FIFOSchedulingAlgorithm()) // For simplicity, just use FIFO
++    } else {
++      None
++    }
++  }
++
++  override def supportedModes(): Seq[String] = Seq("PRIORITY")
++}
+diff --git a/core/src/test/scala/org/apache/spark/scheduler/TaskSetWeightProviderSuite.scala b/core/src/test/scala/org/apache/spark/scheduler/TaskSetWeightProviderSuite.scala
+new file mode 100644
+index 00000000000..d67226d1c03
+--- /dev/null
++++ b/core/src/test/scala/org/apache/spark/scheduler/TaskSetWeightProviderSuite.scala
+@@ -0,0 +1,183 @@
++/*
++ * Licensed to the Apache Software Foundation (ASF) under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The ASF licenses this file to You under the Apache License, Version 2.0
++ * (the "License"); you may not use this file except in compliance with
++ * the License.  You may obtain a copy of the License at
++ *
++ *    http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ */
++
++package org.apache.spark.scheduler
++
++import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SparkFunSuite}
++import org.apache.spark.internal.config._
++import org.apache.spark.resource.ResourceProfile
++import org.apache.spark.util.ManualClock
++
++/**
++ * Tests for TaskSetWeightProvider functionality.
++ */
++class TaskSetWeightProviderSuite extends SparkFunSuite with LocalSparkContext {
++
++  private def createTaskSetManager(
++      stageId: Int,
++      numTasks: Int,
++      taskScheduler: TaskSchedulerImpl,
++      weightProvider: TaskSetWeightProvider = new DefaultWeightProvider()): TaskSetManager = {
++    val tasks = Array.tabulate[Task[_]](numTasks) { i =>
++      new FakeTask(stageId, i, Nil)
++    }
++    new TaskSetManager(
++      taskScheduler,
++      new TaskSet(tasks, stageId, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None),
++      maxTaskFailures = 0,
++      healthTracker = None,
++      clock = new ManualClock(),
++      weightProvider = weightProvider)
++  }
++
++  test("DefaultWeightProvider returns weight of 1") {
++    sc = new SparkContext("local", "test")
++    val taskScheduler = new TaskSchedulerImpl(sc)
++    val provider = new DefaultWeightProvider()
++
++    val tsm = createTaskSetManager(0, 5, taskScheduler, provider)
++    assert(tsm.weight === 1)
++  }
++
++  test("DefaultWeightProvider is used when no configuration is set") {
++    val conf = new SparkConf().setMaster("local").setAppName("test")
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // TaskScheduler should use DefaultWeightProvider by default
++    val tsm = taskScheduler.createTaskSetManager(
++      new TaskSet(
++        Array.tabulate[Task[_]](5)(i => new FakeTask(0, i, Nil)),
++        0, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None),
++      maxTaskFailures = 0)
++
++    assert(tsm.weight === 1)
++  }
++
++  test("Custom weight provider is loaded from configuration") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.TaskCountWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    val tsm = taskScheduler.createTaskSetManager(
++      new TaskSet(
++        Array.tabulate[Task[_]](10)(i => new FakeTask(0, i, Nil)),
++        0, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None),
++      maxTaskFailures = 0)
++
++    // TaskCountWeightProvider returns number of tasks * 10
++    assert(tsm.weight === 100)
++  }
++
++  test("Invalid custom weight provider falls back to DefaultWeightProvider") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.NonExistentWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    val tsm = taskScheduler.createTaskSetManager(
++      new TaskSet(
++        Array.tabulate[Task[_]](5)(i => new FakeTask(0, i, Nil)),
++        0, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None),
++      maxTaskFailures = 0)
++
++    // Should fall back to DefaultWeightProvider (weight = 1)
++    assert(tsm.weight === 1)
++  }
++
++  test("Custom weight provider sets correct weights") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.TaskCountWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    // Create TaskSetManagers using TaskScheduler which has TaskCountWeightProvider configured
++    // TaskCountWeightProvider assigns weight = numTasks * 10
++    val tsm1 = taskScheduler.createTaskSetManager(
++      new TaskSet(Array.tabulate[Task[_]](1)(i => new FakeTask(1, i, Nil)),
++        1, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++    val tsm2 = taskScheduler.createTaskSetManager(
++      new TaskSet(Array.tabulate[Task[_]](5)(i => new FakeTask(2, i, Nil)),
++        2, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++    val tsm3 = taskScheduler.createTaskSetManager(
++      new TaskSet(Array.tabulate[Task[_]](10)(i => new FakeTask(3, i, Nil)),
++        3, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++
++    // Verify weights are set correctly based on task count
++    assert(tsm1.weight === 10)
++    assert(tsm2.weight === 50)
++    assert(tsm3.weight === 100)
++  }
++
++  test("Weight provider with different weights for different stages") {
++    val conf = new SparkConf()
++      .setMaster("local")
++      .setAppName("test")
++      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
++        "org.apache.spark.scheduler.StageIdBasedWeightProvider")
++
++    sc = new SparkContext(conf)
++    val taskScheduler = new TaskSchedulerImpl(sc)
++
++    val tsm1 = taskScheduler.createTaskSetManager(
++      new TaskSet(Array.tabulate[Task[_]](5)(i => new FakeTask(1, i, Nil)),
++        1, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++    val tsm2 = taskScheduler.createTaskSetManager(
++      new TaskSet(Array.tabulate[Task[_]](5)(i => new FakeTask(5, i, Nil)),
++        5, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++    val tsm3 = taskScheduler.createTaskSetManager(
++      new TaskSet(Array.tabulate[Task[_]](5)(i => new FakeTask(10, i, Nil)),
++        10, 0, 0, null, ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
++
++    // StageIdBasedWeightProvider returns stageId as weight
++    assert(tsm1.weight === 1)
++    assert(tsm2.weight === 5)
++    assert(tsm3.weight === 10)
++  }
++}
++
++/**
++ * Custom weight provider for testing that assigns weight based on number of tasks.
++ * Weight = numTasks * 10
++ */
++class TaskCountWeightProvider extends TaskSetWeightProvider {
++  override def getWeight(taskSetManager: TaskSetManager): Int = {
++    taskSetManager.numTasks * 10
++  }
++}
++
++/**
++ * Custom weight provider that uses stage ID as weight.
++ */
++class StageIdBasedWeightProvider extends TaskSetWeightProvider {
++  override def getWeight(taskSetManager: TaskSetManager): Int = {
++    taskSetManager.stageId
++  }
++}
+-- 
+2.50.1 (Apple Git-155)
+

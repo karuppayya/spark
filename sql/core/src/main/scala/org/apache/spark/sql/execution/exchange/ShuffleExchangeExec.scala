@@ -258,6 +258,7 @@ case class ShuffleExchangeExec(
     // The ShuffleRowRDD will be cached in SparkPlan.executeRDD and reused if this plan is used by
     // multiple plans.
     new ShuffledRowRDD(shuffleDependency, readMetrics)
+
   }
 
   override protected def withNewChildInternal(newChild: SparkPlan): ShuffleExchangeExec =

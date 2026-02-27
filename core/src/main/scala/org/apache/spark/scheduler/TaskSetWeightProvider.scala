@@ -18,19 +18,23 @@
 package org.apache.spark.scheduler
 
 /**
- * Scheduling mode for ordering tasks amongst a Schedulable's sub-queues.
+ * Trait for providing scheduling weights for TaskSets.
  *
- * Built-in modes:
- *  - "FAIR": Fair scheduling algorithm
- *  - "FIFO": First-in-first-out scheduling
- *  - "WEIGHTED_FIFO": FIFO with weight-based comparison
- *  - "NONE": Used when a Schedulable has no sub-queues
- *
- * Custom scheduling algorithms can be provided via SchedulingAlgorithmProvider.
- * See SchedulingAlgorithmProvider trait for details.
+ * Implementations can derive weights based on TaskSetManager context such as
+ * task count, stage type, or other metadata.
  */
-object SchedulingMode extends Enumeration {
+private[spark] trait TaskSetWeightProvider extends Serializable {
+  /**
+   * Calculate the scheduling weight for a TaskSetManager.
+   * @return Weight as an integer (higher = higher priority)
+   */
+  def getWeight(taskSetManager: TaskSetManager): Int
+}
 
-  type SchedulingMode = Value
-  val FAIR, FIFO, WEIGHTED_FIFO, NONE = Value
+/**
+ * Default implementation that returns weight of 1 for all TaskSets.
+ * This preserves current Spark behavior where all stages have equal weight.
+ */
+private[spark] class DefaultWeightProvider extends TaskSetWeightProvider {
+  override def getWeight(taskSetManager: TaskSetManager): Int = 1
 }

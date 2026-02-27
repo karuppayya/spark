@@ -58,7 +58,9 @@ private[spark] class TaskSetManager(
     val taskSet: TaskSet,
     val maxTaskFailures: Int,
     healthTracker: Option[HealthTracker] = None,
-    clock: Clock = new SystemClock()) extends Schedulable with Logging {
+    clock: Clock = new SystemClock(),
+    weightProvider: TaskSetWeightProvider = new DefaultWeightProvider())
+  extends Schedulable with Logging {
 
   private val conf = sched.sc.conf
 
@@ -133,11 +135,16 @@ private[spark] class TaskSetManager(
   val taskAttempts = Array.fill[List[TaskInfo]](numTasks)(Nil)
   private[scheduler] var tasksSuccessful = 0
 
-  val weight = 1
   val minShare = 0
   var priority = taskSet.priority
   val stageId = taskSet.stageId
   val name = "TaskSet_" + taskSet.id
+
+  // Weight for scheduling priority, derived from TaskSetWeightProvider.
+  // Higher weight = higher scheduling priority.
+  // Provider is created once in TaskSchedulerImpl and reused across all TaskSets.
+  // IMPORTANT: Must be initialized AFTER stageId and other fields that weight providers may access.
+  val weight: Int = weightProvider.getWeight(this)
   var parent: Pool = null
   private var totalResultSize = 0L
   private var calculatedTasks = 0

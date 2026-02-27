@@ -17,13 +17,42 @@
 
 package org.apache.spark.scheduler
 
+import java.util.Locale
+
+import org.apache.spark.SparkConf
+import org.apache.spark.annotation.DeveloperApi
+
 /**
  * An interface for sort algorithm
  * FIFO: FIFO algorithm between TaskSetManagers
  * FS: FS algorithm between Pools, and FIFO or FS within Pools
+ *
+ * This trait is extensible - users can implement custom scheduling algorithms
+ * and load them via SchedulingAlgorithmProvider.
  */
 private[spark] trait SchedulingAlgorithm {
   def comparator(s1: Schedulable, s2: Schedulable): Boolean
+}
+
+/**
+ * :: DeveloperApi ::
+ * Provider interface for loading custom scheduling algorithms.
+ *
+ * Implementations can be registered via spark.scheduler.algorithm.providers
+ * and referenced in fairscheduler.xml.
+ *
+ * @since 3.6.0
+ */
+@DeveloperApi
+trait SchedulingAlgorithmProvider {
+  /**
+   * Create a scheduling algorithm for the given mode.
+   * @return Some(algorithm) if supported, None otherwise
+   */
+  def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm]
+
+  /** List of scheduling modes supported by this provider. */
+  def supportedModes(): Seq[String]
 }
 
 private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
@@ -70,6 +99,25 @@ private[spark] class FairSchedulingAlgorithm extends SchedulingAlgorithm {
     } else {
       s1.name < s2.name
     }
+  }
+}
+
+/**
+ * Built-in algorithm provider that supports Spark's native scheduling modes.
+ * Provides: FIFO, FAIR
+ */
+private[spark] class BuiltInAlgorithmProvider extends SchedulingAlgorithmProvider {
+
+  override def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm] = {
+    mode.toUpperCase(Locale.ROOT) match {
+      case "FIFO" => Some(new FIFOSchedulingAlgorithm())
+      case "FAIR" => Some(new FairSchedulingAlgorithm())
+      case _ => None
+    }
+  }
+
+  override def supportedModes(): Seq[String] = {
+    Seq("FIFO", "FAIR")
   }
 }
 

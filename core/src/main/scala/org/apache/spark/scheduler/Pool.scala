@@ -22,8 +22,11 @@ import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 
+import org.apache.spark.{SparkConf, SparkEnv}
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config._
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
+import org.apache.spark.util.Utils
 
 /**
  * A Schedulable entity that represents collection of Pools or TaskSetManagers
@@ -48,15 +51,59 @@ private[spark] class Pool(
   var parent: Pool = null
 
   private val taskSetSchedulingAlgorithm: SchedulingAlgorithm = {
-    schedulingMode match {
-      case SchedulingMode.FAIR =>
-        new FairSchedulingAlgorithm()
-      case SchedulingMode.FIFO =>
+    val conf = SparkEnv.get.conf
+    val modeString = schedulingMode.toString
+
+    // Create provider chain: custom providers first, then built-in as fallback
+    val providers = createProviderChain(conf)
+
+    // Try each provider until one returns an algorithm
+    providers.view
+      .flatMap(_.createAlgorithm(modeString, conf))
+      .headOption
+      .getOrElse {
+        logWarning(s"No provider found for scheduling mode '$modeString', falling back to FIFO")
         new FIFOSchedulingAlgorithm()
-      case _ =>
-        val msg = s"Unsupported scheduling mode: $schedulingMode. Use FAIR or FIFO instead."
-        throw new IllegalArgumentException(msg)
-    }
+      }
+  }
+
+  /**
+   * Create the chain of algorithm providers.
+   * Custom providers are tried first, built-in provider is the fallback.
+   */
+  private def createProviderChain(conf: SparkConf): Seq[SchedulingAlgorithmProvider] = {
+    val customProviders = loadCustomProviders(conf)
+    val builtInProvider = new BuiltInAlgorithmProvider()
+
+    customProviders :+ builtInProvider
+  }
+
+  /**
+   * Load custom algorithm providers from configuration.
+   * Reads spark.scheduler.algorithm.providers (comma-separated class names).
+   */
+  private def loadCustomProviders(conf: SparkConf): Seq[SchedulingAlgorithmProvider] = {
+    val providerClasses = conf.get(SCHEDULER_ALGORITHM_PROVIDERS)
+      .split(",")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+    providerClasses.flatMap { className =>
+      try {
+        val clazz = Utils.classForName(className)
+        val provider = clazz.getConstructor()
+          .newInstance()
+          .asInstanceOf[SchedulingAlgorithmProvider]
+
+        logInfo(s"Loaded custom algorithm provider: $className " +
+          s"(supports: ${provider.supportedModes().mkString(", ")})")
+        Some(provider)
+      } catch {
+        case e: Exception =>
+          logError(s"Failed to load custom algorithm provider '$className'", e)
+          None
+      }
+    }.toSeq
   }
 
   override def isSchedulable: Boolean = true

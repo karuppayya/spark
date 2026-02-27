@@ -15,22 +15,27 @@
  * limitations under the License.
  */
 
-package org.apache.spark.scheduler
+package org.apache.spark.shuffle.sort.remote
 
-/**
- * Scheduling mode for ordering tasks amongst a Schedulable's sub-queues.
- *
- * Built-in modes:
- *  - "FAIR": Fair scheduling algorithm
- *  - "FIFO": First-in-first-out scheduling
- *  - "WEIGHTED_FIFO": FIFO with weight-based comparison
- *  - "NONE": Used when a Schedulable has no sub-queues
- *
- * Custom scheduling algorithms can be provided via SchedulingAlgorithmProvider.
- * See SchedulingAlgorithmProvider trait for details.
- */
-object SchedulingMode extends Enumeration {
+import java.util.Collections
 
-  type SchedulingMode = Value
-  val FAIR, FIFO, WEIGHTED_FIFO, NONE = Value
+import org.apache.spark.shuffle.api.ShuffleDriverComponents
+import org.apache.spark.shuffle.sort.io.LocalDiskShuffleDriverComponents
+
+class HybridShuffleDriverComponents(
+       localDiskShuffleDriverComponents: LocalDiskShuffleDriverComponents)
+  extends ShuffleDriverComponents {
+
+  override def initializeApplication(): java.util.Map[String, String] = {
+    localDiskShuffleDriverComponents.initializeApplication()
+    Collections.emptyMap()
+  }
+
+  override def cleanupApplication(): Unit = {
+    localDiskShuffleDriverComponents.cleanupApplication()
+  }
+
+  override def removeShuffle(shuffleId: Int, blocking: Boolean): Unit = {
+    localDiskShuffleDriverComponents.removeShuffle(shuffleId, blocking)
+  }
 }

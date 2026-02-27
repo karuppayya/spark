@@ -181,6 +181,7 @@ else
   # Normal quoting tricks don't work.
   # See: http://mywiki.wooledge.org/BashFAQ/050
   BUILD_COMMAND=("$MVN" clean package \
+      -T 4 \
       -DskipTests \
       -Dmaven.javadoc.skip=true \
       -Dmaven.scaladoc.skip=true \

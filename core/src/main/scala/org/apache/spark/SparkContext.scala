@@ -2377,6 +2377,7 @@ class SparkContext(config: SparkConf) extends Logging {
     Utils.tryLogNonFatalError {
       FallbackStorage.cleanUp(_conf, _hadoopConfiguration)
     }
+
     Utils.tryLogNonFatalError {
       _eventLogger.foreach(_.stop())
     }
