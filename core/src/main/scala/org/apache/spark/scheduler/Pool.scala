@@ -22,8 +22,51 @@ import java.util.concurrent.{ConcurrentHashMap, ConcurrentLinkedQueue}
 import scala.collection.mutable.ArrayBuffer
 import scala.jdk.CollectionConverters._
 
+import org.apache.spark.{SparkConf, SparkEnv}
 import org.apache.spark.internal.Logging
+import org.apache.spark.internal.config._
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
+import org.apache.spark.util.Utils
+
+private[spark] object Pool {
+  /**
+   * Resolve a [[SchedulingAlgorithm]] for the given mode by trying any user-registered
+   * [[SchedulingAlgorithmProvider]]s first and falling back to [[BuiltInAlgorithmProvider]].
+   *
+   * For built-in modes (FIFO, FAIR) this always returns the corresponding algorithm. For unknown
+   * modes that are not handled by any provider, this throws [[IllegalArgumentException]] to
+   * surface user misconfiguration eagerly.
+   */
+  def resolveSchedulingAlgorithm(mode: SchedulingMode, conf: SparkConf): SchedulingAlgorithm = {
+    val customProviders = loadCustomProviders(conf)
+    val providers = customProviders :+ BuiltInAlgorithmProvider
+    providers.view
+      .flatMap(_.createAlgorithm(mode.toString, conf))
+      .headOption
+      .getOrElse {
+        throw new IllegalArgumentException(
+          s"Unsupported scheduling mode: $mode. Use FAIR or FIFO, or register a custom " +
+            s"${classOf[SchedulingAlgorithmProvider].getSimpleName} that supports it via " +
+            s"${SCHEDULER_ALGORITHM_PROVIDERS.key}.")
+      }
+  }
+
+  /**
+   * Load user-registered [[SchedulingAlgorithmProvider]]s, rejecting any that attempt to redefine
+   * a built-in mode (FIFO/FAIR/NONE). Built-in modes are owned by Spark and must not be overridden.
+   */
+  def loadCustomProviders(conf: SparkConf): Seq[SchedulingAlgorithmProvider] = {
+    val classes = conf.get(SCHEDULER_ALGORITHM_PROVIDERS).filter(_.nonEmpty)
+    val providers = Utils.loadExtensions(classOf[SchedulingAlgorithmProvider], classes, conf)
+    providers.foreach { provider =>
+      val overridden = provider.supportedModes.filter(SchedulingMode.isBuiltIn)
+      require(overridden.isEmpty,
+        s"${provider.getClass.getName} may not override built-in scheduling " +
+          s"mode(s) ${overridden.mkString(", ")}; built-in modes (FIFO, FAIR) are reserved.")
+    }
+    providers
+  }
+}
 
 /**
  * A Schedulable entity that represents collection of Pools or TaskSetManagers
@@ -47,17 +90,8 @@ private[spark] class Pool(
   val name = poolName
   var parent: Pool = null
 
-  private val taskSetSchedulingAlgorithm: SchedulingAlgorithm = {
-    schedulingMode match {
-      case SchedulingMode.FAIR =>
-        new FairSchedulingAlgorithm()
-      case SchedulingMode.FIFO =>
-        new FIFOSchedulingAlgorithm()
-      case _ =>
-        val msg = s"Unsupported scheduling mode: $schedulingMode. Use FAIR or FIFO instead."
-        throw new IllegalArgumentException(msg)
-    }
-  }
+  private val taskSetSchedulingAlgorithm: SchedulingAlgorithm =
+    Pool.resolveSchedulingAlgorithm(schedulingMode, SparkEnv.get.conf)
 
   override def isSchedulable: Boolean = true
 

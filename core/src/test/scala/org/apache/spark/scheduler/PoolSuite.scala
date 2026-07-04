@@ -295,6 +295,7 @@ class PoolSuite extends SparkFunSuite with LocalSparkContext {
   }
 
   test("Pool should throw IllegalArgumentException when schedulingMode is not supported") {
+    sc = new SparkContext(LOCAL, APP_NAME)
     intercept[IllegalArgumentException] {
       new Pool("TestPool", SchedulingMode.NONE, 0, 1)
     }

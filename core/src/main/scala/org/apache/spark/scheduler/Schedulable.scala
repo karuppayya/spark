@@ -21,13 +21,16 @@ import java.util.concurrent.ConcurrentLinkedQueue
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.annotation.DeveloperApi
 import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 
 /**
+ * :: DeveloperApi ::
  * An interface for schedulable entities.
  * there are two type of Schedulable entities(Pools and TaskSetManagers)
  */
-private[spark] trait Schedulable {
+@DeveloperApi
+trait Schedulable {
   var parent: Pool
   // child queues
   def schedulableQueue: ConcurrentLinkedQueue[Schedulable]

@@ -58,7 +58,9 @@ private[spark] class TaskSetManager(
     val taskSet: TaskSet,
     val maxTaskFailures: Int,
     healthTracker: Option[HealthTracker] = None,
-    clock: Clock = new SystemClock()) extends Schedulable with Logging {
+    clock: Clock = new SystemClock(),
+    weightProvider: TaskSetWeightProvider = DefaultWeightProvider)
+  extends Schedulable with Logging {
 
   private val conf = sched.sc.conf
 
@@ -133,11 +135,26 @@ private[spark] class TaskSetManager(
   val taskAttempts = Array.fill[List[TaskInfo]](numTasks)(Nil)
   private[scheduler] var tasksSuccessful = 0
 
-  val weight = 1
   val minShare = 0
   var priority = taskSet.priority
   val stageId = taskSet.stageId
   val name = "TaskSet_" + taskSet.id
+  // Weight is computed lazily so the provider can be invoked after construction.
+  // Validated to be > 0 to avoid division-by-zero in FairSchedulingAlgorithm and to surface
+  // misconfigured providers immediately.
+  lazy val weight: Int = {
+    val info = TaskSetInfo(
+      stageId = taskSet.stageId,
+      stageAttemptId = taskSet.stageAttemptId,
+      priority = taskSet.priority,
+      numTasks = numTasks,
+      resourceProfileId = taskSet.resourceProfileId,
+      properties = taskSet.properties)
+    val w = weightProvider.getWeight(info)
+    require(w > 0, s"TaskSetWeightProvider ${weightProvider.getClass.getName} returned " +
+      s"non-positive weight $w for $name; weight must be > 0.")
+    w
+  }
   var parent: Pool = null
   private var totalResultSize = 0L
   private var calculatedTasks = 0

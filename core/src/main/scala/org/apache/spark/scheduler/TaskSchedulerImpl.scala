@@ -185,6 +185,16 @@ private[spark] class TaskSchedulerImpl(
 
   val rootPool: Pool = new Pool("", schedulingMode, 0, 0)
 
+  // Weight provider for calculating TaskSet scheduling weights. Created once and shared
+  // across all TaskSetManagers; the default provider is a stateless singleton.
+  private val taskSetWeightProvider: TaskSetWeightProvider =
+    conf.get(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS)
+      .map { className =>
+        logInfo(log"Creating TaskSetWeightProvider: ${MDC(LogKeys.CLASS_NAME, className)}")
+        Utils.loadExtensions(classOf[TaskSetWeightProvider], Seq(className), conf).head
+      }
+      .getOrElse(DefaultWeightProvider)
+
   // This is a var so that we can reset it for testing purposes.
   private[spark] var taskResultGetter = new TaskResultGetter(sc.env, this)
 
@@ -289,25 +299,33 @@ private[spark] class TaskSchedulerImpl(
       taskSet: TaskSet,
       maxTaskFailures: Int): TaskSetManager = {
     if (isStreamingTaskSet(taskSet)) {
-      streamingTaskSetManager(taskSet, maxTaskFailures)
+      newTaskSetManager(taskSet, maxTaskFailures, streaming = true)
     } else {
-      new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock)
+      newTaskSetManager(taskSet, maxTaskFailures, streaming = false)
     }
   }
 
-  // Create task set manager for streaming tasks sets which
-  // will include query and batch Id in the logs
-  private def streamingTaskSetManager(taskSet: TaskSet, maxTaskFailures: Int): TaskSetManager = {
-    new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock)
-      with StructuredStreamingIdAwareSchedulerLogging {
-        override protected def properties: Properties = this.taskSet.properties
-        override protected val streamingIdAwareLoggingEnabled: Boolean =
-          conf.get(STREAMING_ID_AWARE_SCHEDULER_LOGGING_ENABLED)
-        override protected val streamingQueryIdLength: Int =
-          conf.get(STREAMING_ID_AWARE_SCHEDULER_LOGGING_QUERY_ID_LENGTH)
-        // ensure log name matches the non-streaming version
-        override protected def logName: String = classOf[TaskSetManager].getName
-      }
+  private def newTaskSetManager(
+      taskSet: TaskSet,
+      maxTaskFailures: Int,
+      streaming: Boolean): TaskSetManager = {
+    if (streaming) {
+      // Streaming task sets get a TaskSetManager with query/batch id-aware logging.
+      new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock,
+        taskSetWeightProvider)
+        with StructuredStreamingIdAwareSchedulerLogging {
+          override protected def properties: Properties = this.taskSet.properties
+          override protected val streamingIdAwareLoggingEnabled: Boolean =
+            conf.get(STREAMING_ID_AWARE_SCHEDULER_LOGGING_ENABLED)
+          override protected val streamingQueryIdLength: Int =
+            conf.get(STREAMING_ID_AWARE_SCHEDULER_LOGGING_QUERY_ID_LENGTH)
+          // ensure log name matches the non-streaming version
+          override protected def logName: String = classOf[TaskSetManager].getName
+        }
+    } else {
+      new TaskSetManager(this, taskSet, maxTaskFailures, healthTrackerOpt, clock,
+        taskSetWeightProvider)
+    }
   }
 
   private def isStreamingTaskSet(taskSet: TaskSet): Boolean =

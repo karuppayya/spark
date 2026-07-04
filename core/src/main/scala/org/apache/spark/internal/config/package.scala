@@ -2434,6 +2434,25 @@ package object config {
       .intConf
       .createWithDefault(5)
 
+  private[spark] val SCHEDULER_ALGORITHM_PROVIDERS =
+    ConfigBuilder("spark.scheduler.algorithmProviders")
+      .doc("Comma-separated list of SchedulingAlgorithmProvider class names for custom " +
+        "scheduling algorithms. Providers are tried in order before falling back to built-in " +
+        "algorithms (FIFO, FAIR).")
+      .version("5.0.0")
+      .stringConf
+      .toSequence
+      .createWithDefault(Nil)
+
+  private[spark] val SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS =
+    ConfigBuilder("spark.scheduler.taskSetWeightProvider.class")
+      .doc("Fully qualified class name of TaskSetWeightProvider implementation for " +
+        "calculating per-stage scheduling weights. If not set, uses DefaultWeightProvider " +
+        "(weight=1 for all stages).")
+      .version("5.0.0")
+      .stringConf
+      .createOptional
+
   private[spark] val SCHEDULER_REVIVE_INTERVAL =
     ConfigBuilder("spark.scheduler.revive.interval")
       .version("0.8.1")

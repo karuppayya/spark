@@ -17,13 +17,31 @@
 
 package org.apache.spark.scheduler
 
+import java.util.Locale
+
+import org.apache.spark.SparkConf
+import org.apache.spark.annotation.DeveloperApi
+
 /**
+ * :: DeveloperApi ::
  * An interface for sort algorithm
  * FIFO: FIFO algorithm between TaskSetManagers
  * FS: FS algorithm between Pools, and FIFO or FS within Pools
  */
-private[spark] trait SchedulingAlgorithm {
+@DeveloperApi
+trait SchedulingAlgorithm {
   def comparator(s1: Schedulable, s2: Schedulable): Boolean
+}
+
+/**
+ * :: DeveloperApi ::
+ * Provider interface for loading custom scheduling algorithms.
+ */
+@DeveloperApi
+trait SchedulingAlgorithmProvider {
+  def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm]
+
+  def supportedModes: Seq[String]
 }
 
 private[spark] class FIFOSchedulingAlgorithm extends SchedulingAlgorithm {
@@ -73,3 +91,15 @@ private[spark] class FairSchedulingAlgorithm extends SchedulingAlgorithm {
   }
 }
 
+private[spark] object BuiltInAlgorithmProvider extends SchedulingAlgorithmProvider {
+
+  override def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm] = {
+    mode.toUpperCase(Locale.ROOT) match {
+      case "FIFO" => Some(new FIFOSchedulingAlgorithm())
+      case "FAIR" => Some(new FairSchedulingAlgorithm())
+      case _ => None
+    }
+  }
+
+  override val supportedModes: Seq[String] = Seq("FIFO", "FAIR")
+}
