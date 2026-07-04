@@ -45,7 +45,6 @@ import org.apache.spark.rdd.{DeterministicLevel, RDD}
 import org.apache.spark.resource.{ExecutorResourceRequests, ResourceProfile, ResourceProfileBuilder, TaskResourceProfile, TaskResourceRequests}
 import org.apache.spark.resource.ResourceUtils.{FPGA, GPU}
 import org.apache.spark.rpc.RpcTimeoutException
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.scheduler.local.LocalSchedulerBackend
 import org.apache.spark.shuffle.{FetchFailedException, MetadataFetchFailedException}
 import org.apache.spark.storage.{BlockId, BlockManager, BlockManagerId, BlockManagerMaster}
@@ -205,7 +204,7 @@ class DAGSchedulerSuite extends SparkFunSuite with TempLocalSparkContext with Ti
 
   val taskScheduler = new TaskScheduler() {
     val executorsPendingDecommission = new HashMap[String, ExecutorDecommissionState]
-    override def schedulingMode: SchedulingMode = SchedulingMode.FIFO
+    override def schedulingMode: String = SchedulingMode.FIFO.toString
     override def rootPool: Pool = new Pool("", schedulingMode, 0, 0)
     override def start() = {}
     override def stop(exitCode: Int) = {}
@@ -937,7 +936,7 @@ class DAGSchedulerSuite extends SparkFunSuite with TempLocalSparkContext with Ti
     // make sure that the DAGScheduler doesn't crash when the TaskScheduler
     // doesn't implement killTask()
     val noKillTaskScheduler = new TaskScheduler() {
-      override def schedulingMode: SchedulingMode = SchedulingMode.FIFO
+      override def schedulingMode: String = SchedulingMode.FIFO.toString
       override def rootPool: Pool = new Pool("", schedulingMode, 0, 0)
       override def start(): Unit = {}
       override def stop(exitCode: Int): Unit = {}

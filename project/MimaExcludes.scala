@@ -34,7 +34,11 @@ import com.typesafe.tools.mima.core.*
 object MimaExcludes {
 
   // Exclude rules for 5.0.x from 4.3.0 (add 5.0-specific filters below as needed).
-  lazy val v50excludes: Seq[Problem => Boolean] = v43excludes
+  lazy val v50excludes: Seq[Problem => Boolean] = v43excludes ++ Seq(
+    // [SPARK-XXXXX][CORE] Extensible scheduler: SparkContext.getSchedulingMode now returns the
+    // mode name as a String so custom (provider-defined) modes can be represented.
+    ProblemFilters.exclude[IncompatibleResultTypeProblem]("org.apache.spark.SparkContext.getSchedulingMode")
+  )
 
   // Exclude rules for 4.3.x from 4.2.0 (add 4.3-specific filters below as needed).
   lazy val v43excludes: Seq[Problem => Boolean] = v42excludes

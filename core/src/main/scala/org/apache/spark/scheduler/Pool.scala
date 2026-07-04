@@ -25,7 +25,6 @@ import scala.jdk.CollectionConverters._
 import org.apache.spark.{SparkConf, SparkEnv}
 import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.util.Utils
 
 private[spark] object Pool {
@@ -37,11 +36,11 @@ private[spark] object Pool {
    * modes that are not handled by any provider, this throws [[IllegalArgumentException]] to
    * surface user misconfiguration eagerly.
    */
-  def resolveSchedulingAlgorithm(mode: SchedulingMode, conf: SparkConf): SchedulingAlgorithm = {
+  def resolveSchedulingAlgorithm(mode: String, conf: SparkConf): SchedulingAlgorithm = {
     val customProviders = loadCustomProviders(conf)
     val providers = customProviders :+ BuiltInAlgorithmProvider
     providers.view
-      .flatMap(_.createAlgorithm(mode.toString, conf))
+      .flatMap(_.createAlgorithm(mode, conf))
       .headOption
       .getOrElse {
         throw new IllegalArgumentException(
@@ -73,7 +72,7 @@ private[spark] object Pool {
  */
 private[spark] class Pool(
     val poolName: String,
-    val schedulingMode: SchedulingMode,
+    val schedulingMode: String,
     initMinShare: Int,
     initWeight: Int)
   extends Schedulable with Logging {

@@ -38,7 +38,6 @@ import org.apache.spark.internal.LogKeys._
 import org.apache.spark.internal.config._
 import org.apache.spark.resource.ResourceProfile
 import org.apache.spark.rpc.RpcEndpoint
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.scheduler.TaskLocality.TaskLocality
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.{AccumulatorV2, Clock, SystemClock, ThreadUtils, Utils}
@@ -181,7 +180,7 @@ private[spark] class TaskSchedulerImpl(
 
   private var schedulableBuilder: SchedulableBuilder = null
   // default scheduler is FIFO
-  val schedulingMode: SchedulingMode = conf.get(SCHEDULER_MODE)
+  val schedulingMode: String = conf.get(SCHEDULER_MODE)
 
   val rootPool: Pool = new Pool("", schedulingMode, 0, 0)
 
@@ -221,13 +220,15 @@ private[spark] class TaskSchedulerImpl(
     this.backend = backend
     schedulableBuilder = {
       schedulingMode match {
-        case SchedulingMode.FIFO =>
+        case m if m == SchedulingMode.FIFO.toString =>
           new FIFOSchedulableBuilder(rootPool)
-        case SchedulingMode.FAIR =>
+        case m if m == SchedulingMode.FAIR.toString =>
           new FairSchedulableBuilder(rootPool, sc)
         case _ =>
-          throw new IllegalArgumentException(s"Unsupported $SCHEDULER_MODE_PROPERTY: " +
-          s"$schedulingMode")
+          // Custom modes get a flat rootPool (FIFO-style layout); the rootPool's comparator is the
+          // custom algorithm resolved from the registered SchedulingAlgorithmProvider. Constructing
+          // rootPool above already validated that a provider supports this mode.
+          new FIFOSchedulableBuilder(rootPool)
       }
     }
     schedulableBuilder.buildPools()

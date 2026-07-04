@@ -40,6 +40,46 @@ class CustomSchedulingIntegrationSuite extends SparkFunSuite with LocalSparkCont
         ResourceProfile.DEFAULT_RESOURCE_PROFILE_ID, None), 0)
   }
 
+  test("Custom mode + custom weight provider order TaskSets by weight") {
+    val conf = new SparkConf()
+      .setMaster("local")
+      .setAppName("test")
+      .set("spark.scheduler.mode", "WEIGHT_DESC")
+      .set(SCHEDULER_ALGORITHM_PROVIDERS,
+        Seq("org.apache.spark.scheduler.WeightDescAlgorithmProvider"))
+      .set(SCHEDULER_TASKSET_WEIGHT_PROVIDER_CLASS,
+        "org.apache.spark.scheduler.TaskCountWeightProvider")
+
+    sc = new SparkContext(conf)
+    val taskScheduler = new TaskSchedulerImpl(sc)
+
+    // The custom WEIGHT_DESC mode orders by weight descending; TaskCountWeightProvider sets
+    // weight = numTasks * 10, so larger task sets sort first.
+    val pool = new Pool("weighted", "WEIGHT_DESC", 0, 0)
+    val small = createTaskSetManager(stageId = 1, numTasks = 2, taskScheduler)
+    val big = createTaskSetManager(stageId = 2, numTasks = 10, taskScheduler)
+    val mid = createTaskSetManager(stageId = 3, numTasks = 5, taskScheduler)
+    pool.addSchedulable(small)
+    pool.addSchedulable(big)
+    pool.addSchedulable(mid)
+
+    val sorted = pool.getSortedTaskSetQueue.map(_.stageId)
+    assert(sorted.toSeq === Seq(2, 3, 1))
+  }
+
+  test("Custom mode selects a flat FIFO-style builder on the live scheduler") {
+    val conf = new SparkConf()
+      .setMaster("local")
+      .setAppName("test")
+      .set("spark.scheduler.mode", "WEIGHT_DESC")
+      .set(SCHEDULER_ALGORITHM_PROVIDERS,
+        Seq("org.apache.spark.scheduler.WeightDescAlgorithmProvider"))
+
+    sc = new SparkContext(conf)
+    assert(sc.getSchedulingMode === "WEIGHT_DESC")
+    assert(sc.taskScheduler.rootPool.schedulingMode === "WEIGHT_DESC")
+  }
+
   test("Provider that redefines a built-in mode is rejected at startup") {
     val conf = new SparkConf()
       .setMaster("local")
@@ -53,11 +93,23 @@ class CustomSchedulingIntegrationSuite extends SparkFunSuite with LocalSparkCont
     assert(e.getMessage.contains("may not override built-in scheduling mode"))
   }
 
+  test("Unknown scheduling mode with no supporting provider is rejected") {
+    val conf = new SparkConf()
+      .setMaster("local")
+      .setAppName("test")
+      .set("spark.scheduler.mode", "NO_SUCH_MODE")
+
+    val e = intercept[IllegalArgumentException] {
+      sc = new SparkContext(conf)
+    }
+    assert(e.getMessage.contains("Unsupported scheduling mode"))
+  }
+
   test("DefaultWeightProvider preserves FIFO ordering across TaskSets") {
     sc = new SparkContext(new SparkConf().setMaster("local").setAppName("test"))
     val taskScheduler = new TaskSchedulerImpl(sc)
 
-    val pool = new Pool("fifo", SchedulingMode.FIFO, 0, 0)
+    val pool = new Pool("fifo", SchedulingMode.FIFO.toString, 0, 0)
     val tsm1 = createTaskSetManager(1, 2, taskScheduler)
     val tsm2 = createTaskSetManager(2, 10, taskScheduler)
     val tsm3 = createTaskSetManager(3, 5, taskScheduler)
@@ -79,7 +131,7 @@ class CustomSchedulingIntegrationSuite extends SparkFunSuite with LocalSparkCont
     sc = new SparkContext(conf)
     val taskScheduler = new TaskSchedulerImpl(sc)
 
-    val pool = new Pool("fifo", SchedulingMode.FIFO, 0, 0)
+    val pool = new Pool("fifo", SchedulingMode.FIFO.toString, 0, 0)
     val tsm1 = createTaskSetManager(1, 5, taskScheduler)
     val tsm2 = createTaskSetManager(2, 10, taskScheduler)
     pool.addSchedulable(tsm1)
@@ -96,7 +148,7 @@ class CustomSchedulingIntegrationSuite extends SparkFunSuite with LocalSparkCont
       .set(SCHEDULER_ALGORITHM_PROVIDERS, Seq.empty[String])
 
     sc = new SparkContext(confEmpty)
-    new Pool("", SchedulingMode.FIFO, 0, 0)
+    new Pool("", SchedulingMode.FIFO.toString, 0, 0)
   }
 
 }

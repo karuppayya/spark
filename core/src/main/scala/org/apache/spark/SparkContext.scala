@@ -2125,9 +2125,10 @@ class SparkContext(config: SparkConf) extends Logging {
   }
 
   /**
-   * Return current scheduling mode
+   * Return current scheduling mode. Built-in modes are FIFO and FAIR; a custom mode name is
+   * returned when a [[org.apache.spark.scheduler.SchedulingAlgorithmProvider]] is in use.
    */
-  def getSchedulingMode: SchedulingMode.SchedulingMode = {
+  def getSchedulingMode: String = {
     assertNotStopped()
     taskScheduler.schedulingMode
   }
@@ -2951,7 +2952,7 @@ class SparkContext(config: SparkConf) extends Logging {
   /** Post the environment update event once the task scheduler is ready */
   private[spark] def postEnvironmentUpdate(): Unit = {
     if (taskScheduler != null) {
-      val schedulingMode = getSchedulingMode.toString
+      val schedulingMode = getSchedulingMode
       val addedJarPaths = allAddedJars.keys.toSeq
       val addedFilePaths = allAddedFiles.keys.toSeq
       val addedArchivePaths = allAddedArchives.keys.toSeq

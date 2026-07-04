@@ -20,7 +20,6 @@ package org.apache.spark.scheduler
 import scala.collection.mutable.Map
 
 import org.apache.spark.executor.ExecutorMetrics
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.AccumulatorV2
 
@@ -39,7 +38,7 @@ private[spark] trait TaskScheduler {
 
   def rootPool: Pool
 
-  def schedulingMode: SchedulingMode
+  def schedulingMode: String
 
   def start(): Unit
 

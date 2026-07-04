@@ -110,7 +110,7 @@ class SchedulingAlgorithmProviderSuite extends SparkFunSuite with LocalSparkCont
 
     sc = new SparkContext(conf)
 
-    val pool = new Pool("", SchedulingMode.FIFO, 0, 0)
+    val pool = new Pool("", SchedulingMode.FIFO.toString, 0, 0)
     assert(pool != null)
   }
 }

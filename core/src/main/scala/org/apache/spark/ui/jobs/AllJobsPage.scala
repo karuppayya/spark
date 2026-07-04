@@ -30,7 +30,6 @@ import org.apache.commons.text.StringEscapeUtils
 import org.apache.spark.JobExecutionStatus
 import org.apache.spark.internal.config.SCHEDULER_MODE
 import org.apache.spark.internal.config.UI._
-import org.apache.spark.scheduler._
 import org.apache.spark.status.AppStatusStore
 import org.apache.spark.status.api.v1
 import org.apache.spark.ui._
@@ -313,10 +312,11 @@ private[ui] class AllJobsPage(parent: JobsTab, store: AppStatusStore) extends We
       s"${appSummary.numCompletedJobs}, only showing ${completedJobs.size}"
     }
 
-    // SPARK-33991 Avoid enumeration conversion error.
+    // Display the configured scheduling mode as-is. Built-in modes are FIFO/FAIR; a custom mode
+    // name (from a SchedulingAlgorithmProvider) is shown verbatim.
     val schedulingMode = store.environmentInfo().sparkProperties.toMap
       .get(SCHEDULER_MODE.key)
-      .map { mode => SchedulingMode.withName(mode.toUpperCase(Locale.ROOT)).toString }
+      .map(_.toUpperCase(Locale.ROOT))
       .getOrElse("Unknown")
 
     val summary: NodeSeq =

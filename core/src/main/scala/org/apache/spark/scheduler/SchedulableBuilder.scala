@@ -29,7 +29,6 @@ import org.apache.spark.SparkContext
 import org.apache.spark.internal.{Logging, LogKeys}
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.internal.config.{SCHEDULER_ALLOCATION_FILE, SCHEDULER_MODE, STREAMING_ID_AWARE_SCHEDULER_LOGGING_ENABLED, STREAMING_ID_AWARE_SCHEDULER_LOGGING_QUERY_ID_LENGTH}
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.util.Utils
 
 /**
@@ -73,7 +72,7 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, sc: SparkContext
   val WEIGHT_PROPERTY = "weight"
   val POOL_NAME_PROPERTY = "@name"
   val POOLS_PROPERTY = "pool"
-  val DEFAULT_SCHEDULING_MODE = SchedulingMode.FIFO
+  val DEFAULT_SCHEDULING_MODE = SchedulingMode.FIFO.toString
   val DEFAULT_MINIMUM_SHARE = 0
   val DEFAULT_WEIGHT = 1
 
@@ -157,11 +156,13 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, sc: SparkContext
     }
   }
 
+  // Sub-pool scheduling modes within the fair scheduler XML remain restricted to the built-in
+  // modes (FIFO/FAIR); custom provider-defined modes apply only at the top level.
   private def getSchedulingModeValue(
       poolNode: Node,
       poolName: String,
-      defaultValue: SchedulingMode,
-      fileName: String): SchedulingMode = {
+      defaultValue: String,
+      fileName: String): String = {
 
     val xmlSchedulingMode =
       (poolNode \ SCHEDULING_MODE_PROPERTY).text.trim.toUpperCase(Locale.ROOT)
@@ -173,7 +174,7 @@ private[spark] class FairSchedulableBuilder(val rootPool: Pool, sc: SparkContext
       log"${MDC(POOL_NAME, poolName)}"
     try {
       if (SchedulingMode.withName(xmlSchedulingMode) != SchedulingMode.NONE) {
-        SchedulingMode.withName(xmlSchedulingMode)
+        SchedulingMode.withName(xmlSchedulingMode).toString
       } else {
         logWarning(warningMessage)
         defaultValue

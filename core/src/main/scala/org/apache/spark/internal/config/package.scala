@@ -2413,8 +2413,13 @@ package object config {
   private[spark] val SCHEDULER_MODE =
     ConfigBuilder("spark.scheduler.mode")
       .version("0.8.0")
-      .enumConf(SchedulingMode)
-      .createWithDefault(SchedulingMode.FIFO)
+      .doc("The scheduling mode between jobs submitted to the same SparkContext. Built-in modes " +
+        "are FIFO and FAIR. Custom modes may be introduced by registering a " +
+        "SchedulingAlgorithmProvider via spark.scheduler.algorithmProviders; the mode value must " +
+        "match one of the provider's supportedModes. Providers may not redefine FIFO or FAIR.")
+      .stringConf
+      .transform(_.toUpperCase(Locale.ROOT))
+      .createWithDefault(SchedulingMode.FIFO.toString)
 
   private[spark] val STREAMING_ID_AWARE_SCHEDULER_LOGGING_ENABLED =
     ConfigBuilder("spark.scheduler.streaming.idAwareLogging.enabled")

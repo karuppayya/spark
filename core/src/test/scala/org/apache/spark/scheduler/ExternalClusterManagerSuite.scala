@@ -22,7 +22,6 @@ import scala.collection.mutable.Map
 import org.apache.spark.{LocalSparkContext, SparkConf, SparkContext, SparkFunSuite}
 import org.apache.spark.executor.ExecutorMetrics
 import org.apache.spark.resource.ResourceProfile
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 import org.apache.spark.status.api.v1.ThreadStackTrace
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.AccumulatorV2
@@ -80,7 +79,7 @@ private class DummySchedulerBackend extends SchedulerBackend {
 
 private class DummyTaskScheduler extends TaskScheduler {
   var initialized = false
-  override def schedulingMode: SchedulingMode = SchedulingMode.FIFO
+  override def schedulingMode: String = SchedulingMode.FIFO.toString
   override def rootPool: Pool = new Pool("", schedulingMode, 0, 0)
   override def start(): Unit = {}
   override def stop(exitCode: Int): Unit = {}

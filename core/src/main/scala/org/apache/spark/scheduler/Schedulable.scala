@@ -22,7 +22,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.annotation.DeveloperApi
-import org.apache.spark.scheduler.SchedulingMode.SchedulingMode
 
 /**
  * :: DeveloperApi ::
@@ -34,7 +33,8 @@ trait Schedulable {
   var parent: Pool
   // child queues
   def schedulableQueue: ConcurrentLinkedQueue[Schedulable]
-  def schedulingMode: SchedulingMode
+  // Scheduling mode name; built-in modes are FIFO/FAIR/NONE, custom modes are provider-defined.
+  def schedulingMode: String
   def weight: Int
   def minShare: Int
   def runningTasks: Int

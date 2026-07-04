@@ -33,7 +33,6 @@ import org.apache.spark.errors.SparkCoreErrors
 import org.apache.spark.internal.{config, Logging, LogKeys}
 import org.apache.spark.internal.LogKeys._
 import org.apache.spark.internal.config._
-import org.apache.spark.scheduler.SchedulingMode._
 import org.apache.spark.util.{AccumulatorV2, Clock, LongAccumulator, SystemClock, Utils}
 import org.apache.spark.util.collection.{OpenHashSet, PercentileHeap}
 
@@ -286,7 +285,7 @@ private[spark] class TaskSetManager(
 
   override def schedulableQueue: ConcurrentLinkedQueue[Schedulable] = null
 
-  override def schedulingMode: SchedulingMode = SchedulingMode.NONE
+  override def schedulingMode: String = SchedulingMode.NONE.toString
 
   private[scheduler] var emittedTaskSizeWarning = false
 

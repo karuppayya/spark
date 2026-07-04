@@ -70,6 +70,22 @@ class PriorityAlgorithmProvider extends SchedulingAlgorithmProvider {
 }
 
 /**
+ * Test provider that introduces a new "WEIGHT_DESC" mode backed by a weight-descending algorithm.
+ * Used to exercise a custom mode end-to-end through the actual scheduling pipeline.
+ */
+class WeightDescAlgorithmProvider extends SchedulingAlgorithmProvider {
+  override def createAlgorithm(mode: String, conf: SparkConf): Option[SchedulingAlgorithm] = {
+    if (mode.toUpperCase(Locale.ROOT) == "WEIGHT_DESC") {
+      Some(new WeightedFIFOSchedulingAlgorithm())
+    } else {
+      None
+    }
+  }
+
+  override def supportedModes: Seq[String] = Seq("WEIGHT_DESC")
+}
+
+/**
  * Illegal provider that attempts to redefine the built-in FAIR mode. Used to verify that loading
  * such a provider is rejected.
  */
